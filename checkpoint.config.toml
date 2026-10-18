@@ -5,3 +5,11 @@
 [[masks]]
 pattern = "sess_[0-9a-zA-Z]{8,}"
 replacement = "<session>"
+
+# Upstream base URL used by `checkpoint run` when neither --upstream nor
+# CHECKPOINT_UPSTREAM_URL is set. Defaults to the demo fake LLM.
+# upstream_url = "http://127.0.0.1:4141"
+
+# Extra redaction patterns are applied in addition to the built-in ones.
+# [[redaction]]
+# pattern = "my-secret-[0-9]+"

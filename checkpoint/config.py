@@ -8,6 +8,7 @@ from pathlib import Path
 import msgspec
 
 from checkpoint.matching.normalize import DEFAULT_MASKS, MaskRule
+from checkpoint.matching.redact import DEFAULT_REDACTION, RedactionRule
 
 DEFAULT_CONFIG_FILENAME = "checkpoint.config.toml"
 
@@ -16,6 +17,8 @@ class Config(msgspec.Struct, forbid_unknown_fields=True):
     """User configuration. Unknown keys are rejected so typos fail loudly."""
 
     masks: list[MaskRule] = msgspec.field(default_factory=list)
+    redaction: list[RedactionRule] = msgspec.field(default_factory=list)
+    upstream_url: str | None = None
 
 
 def load_config(path: str | Path | None = None) -> Config:
@@ -33,3 +36,8 @@ def load_config(path: str | Path | None = None) -> Config:
 def effective_masks(config: Config) -> tuple[MaskRule, ...]:
     """Built-in masks plus any extra masks from the config file."""
     return DEFAULT_MASKS + tuple(config.masks)
+
+
+def effective_redaction(config: Config) -> tuple[RedactionRule, ...]:
+    """Built-in redaction rules plus any extra rules from the config file."""
+    return DEFAULT_REDACTION + tuple(config.redaction)

@@ -25,6 +25,10 @@ from typing import Any
 
 import httpx
 
+import checkpoint
+
+checkpoint.init(run_name="refund-agent")
+
 DEFAULT_BASE_URL = "http://127.0.0.1:4040/v1"
 DEFAULT_MODEL = "demo-model"
 DEFAULT_TICKET = "Please refund order ORD-1002. It arrived damaged."
@@ -61,11 +65,13 @@ ORDERS: dict[str, dict[str, Any]] = {
 }
 
 
+@checkpoint.tool(mode="pure")
 def lookup_order(order_id: str) -> dict[str, Any]:
     """Tool (pure): deterministic in-memory order lookup."""
     return ORDERS.get(order_id, {"error": f"unknown order_id {order_id}"})
 
 
+@checkpoint.tool(mode="pure")
 def check_policy(order: dict[str, Any]) -> dict[str, Any]:
     """Tool (pure): refund policy check."""
     amount = order.get("amount")
@@ -78,6 +84,7 @@ def check_policy(order: dict[str, Any]) -> dict[str, Any]:
     return {"refundable": refundable, "amount": amount, "limit": REFUND_LIMIT}
 
 
+@checkpoint.tool(mode="pure")
 def confirm_with_user(order_id: str, amount: float | None) -> bool:
     """Tool (pure): confirmation step, driven by env so CI stays non-interactive."""
     del order_id, amount
@@ -85,6 +92,7 @@ def confirm_with_user(order_id: str, amount: float | None) -> bool:
     return answer in {"1", "true", "yes"}
 
 
+@checkpoint.tool(mode="stub")
 def issue_refund(order_id: str, amount: float) -> dict[str, Any]:
     """Tool (stub): side-effecting refund; appends to the ledger file."""
     refund_id = f"rf_{order_id.lower().replace('-', '_')}"
@@ -114,12 +122,27 @@ def _chat(task: str, system: str, payload: dict[str, Any]) -> str:
     return str(data["choices"][0]["message"]["content"])
 
 
+@checkpoint.step(name="plan")
+def _plan(ticket: str) -> dict[str, Any]:
+    return json.loads(_chat("plan", PLANNER_SYSTEM, {"ticket": ticket}))
+
+
+@checkpoint.step(name="decide")
+def _decide(order: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
+    return json.loads(_chat("decide", DECISION_SYSTEM, {"order": order, "policy": policy}))
+
+
+@checkpoint.step(name="compose")
+def _compose(payload: dict[str, Any]) -> str:
+    return _chat("compose", REPLY_SYSTEM, payload)
+
+
 def handle_ticket(ticket: str) -> dict[str, Any]:
     """Run the agent end to end and return its final state."""
-    plan = json.loads(_chat("plan", PLANNER_SYSTEM, {"ticket": ticket}))
+    plan = _plan(ticket)
     order = lookup_order(str(plan.get("order_id")))
     policy = check_policy(order)
-    decision = json.loads(_chat("decide", DECISION_SYSTEM, {"order": order, "policy": policy}))
+    decision = _decide(order, policy)
 
     confirmation: bool | None = None
     refund: dict[str, Any] | None = None
@@ -129,16 +152,14 @@ def handle_ticket(ticket: str) -> dict[str, Any]:
         if confirmation and isinstance(amount, (int, float)):
             refund = issue_refund(str(order.get("order_id")), float(amount))
 
-    reply = _chat(
-        "compose",
-        REPLY_SYSTEM,
+    reply = _compose(
         {
             "decision": decision.get("decision"),
             "amount": decision.get("amount"),
             "refund_id": (refund or {}).get("refund_id"),
-        },
+        }
     )
-    return {
+    state = {
         "ticket": ticket,
         "plan": plan,
         "order": order,
@@ -148,6 +169,8 @@ def handle_ticket(ticket: str) -> dict[str, Any]:
         "refund": refund,
         "reply": reply,
     }
+    checkpoint.checkpoint("after_refund", state)
+    return state
 
 
 def main() -> int:
