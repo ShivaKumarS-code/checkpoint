@@ -1,0 +1,7 @@
+# Example checkpoint config for the refund agent demo.
+# Extra masks are applied to string values in addition to the built-in
+# ISO-timestamp and UUID masks.
+
+[[masks]]
+pattern = "sess_[0-9a-zA-Z]{8,}"
+replacement = "<session>"
