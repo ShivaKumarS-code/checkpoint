@@ -16,6 +16,7 @@ dependencies = [
     "time-machine>=2.14",
     "typer>=0.12",
     "uvicorn>=0.30",
+    "websockets>=12",
     "wrapt>=1.16",
     "zstandard>=0.22",
 ]
@@ -27,6 +28,7 @@ checkpoint = "checkpoint.cli:main"
 dev = [
     "pyright>=1.1.380",
     "pytest>=8.0",
+    "pytest-asyncio>=0.24",
     "ruff>=0.6",
 ]
 
@@ -50,3 +52,4 @@ typeCheckingMode = "standard"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+asyncio_mode = "auto"

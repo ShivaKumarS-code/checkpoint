@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import threading
+import webbrowser
 from pathlib import Path
 from typing import Any
 
@@ -341,6 +343,109 @@ def test(
         parent_run_id, variants, db, upstream, port, max_parallel, require_pass=True
     )
     raise typer.Exit(code=exit_code)
+
+
+@app.command()
+def diff(
+    run_a: str = typer.Argument(..., help="first run id"),
+    run_b: str = typer.Argument(..., help="second run id"),
+    db: Path | None = typer.Option(None, "--db", help="cassette database path"),
+) -> None:
+    """Show the first step where two runs diverge."""
+    db_path = resolve_db(db)
+    conn = connect(db_path)
+    try:
+        runs = {
+            run_id: conn.execute(
+                "SELECT * FROM runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            for run_id in (run_a, run_b)
+        }
+        for run_id, run in runs.items():
+            if run is None:
+                console.print(f"[red]unknown run:[/red] {run_id}")
+                raise typer.Exit(code=1)
+        steps = {
+            run_id: conn.execute(
+                "SELECT * FROM steps WHERE run_id = ? ORDER BY step_index", (run_id,)
+            ).fetchall()
+            for run_id in (run_a, run_b)
+        }
+        index = _first_divergent_step(steps[run_a], steps[run_b])
+        if index is None:
+            console.print(
+                f"no divergent step: both runs have {len(steps[run_a])} "
+                "identical step inputs"
+            )
+            return
+        left = steps[run_a][index] if index < len(steps[run_a]) else None
+        right = steps[run_b][index] if index < len(steps[run_b]) else None
+        console.print(f"[bold]first divergence at step {index}[/bold]")
+        console.print(f"  {run_a}: {_step_label(left)}")
+        console.print(f"  {run_b}: {_step_label(right)}")
+        blobs = BlobStore(conn)
+        for run_id, row in ((run_a, left), (run_b, right)):
+            if row is None:
+                continue
+            try:
+                payload = blobs.get_json(row["input_hash"])
+            except KeyError:
+                payload = None
+            console.print(f"[dim]{run_id} input:[/dim]")
+            console.print_json(data=payload)
+    finally:
+        conn.close()
+
+
+@app.command()
+def web(
+    port: int = typer.Option(4040, "--port", help="daemon port (0 picks a free port)"),
+    upstream: str | None = typer.Option(
+        None, "--upstream", "-u", help="upstream OpenAI-compatible base URL"
+    ),
+    db: Path | None = typer.Option(None, "--db", help="cassette database path"),
+    no_open: bool = typer.Option(False, "--no-open", help="do not open a browser"),
+) -> None:
+    """Start the local daemon and open the API/UI."""
+    config = load_config()
+    db_path = resolve_db(db)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    upstream_url = resolve_upstream(upstream, config)
+    try:
+        daemon = run_daemon(db_path, upstream_url, config, port=port)
+    except (OSError, RuntimeError, SystemExit) as exc:
+        console.print(f"[red]failed to start daemon:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    url = daemon.url
+    console.print(f"checkpoint daemon at [bold]{url}[/bold] (docs {url}/docs)")
+    if not no_open:
+        webbrowser.open(url)
+    try:
+        threading.Event().wait()
+    except KeyboardInterrupt:
+        console.print("stopping daemon")
+    finally:
+        daemon.stop()
+
+
+def _first_divergent_step(left: list[Any], right: list[Any]) -> int | None:
+    for index, (step_a, step_b) in enumerate(zip(left, right, strict=False)):
+        key_a = (step_a["step_type"], step_a["name"], step_a["match_key"])
+        key_b = (step_b["step_type"], step_b["name"], step_b["match_key"])
+        if key_a != key_b:
+            return index
+    if len(left) != len(right):
+        return min(len(left), len(right))
+    return None
+
+
+def _step_label(row: Any) -> str:
+    if row is None:
+        return "<no recorded step>"
+    return (
+        f"{row['step_type']} {row['name']!r} "
+        f"(occurrence {row['occurrence']}, source {row['source']})"
+    )
 
 
 @app.command()

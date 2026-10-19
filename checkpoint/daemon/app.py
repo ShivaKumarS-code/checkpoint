@@ -13,7 +13,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from checkpoint.config import Config, effective_masks, effective_redaction, load_config
-from checkpoint.daemon import experiments, proxy_router, sdk_router
+from checkpoint.daemon import events, experiments, proxy_router, query_router, sdk_router
 from checkpoint.daemon.recorder import Recorder
 from checkpoint.storage.cas import BlobStore
 from checkpoint.storage.db import init_db
@@ -29,18 +29,25 @@ def create_app(
         config = load_config()
     conn = init_db(db_path)
     blob_store = BlobStore(conn)
+    bus = events.EventBus()
     recorder = Recorder(
-        conn, blob_store, effective_masks(config), effective_redaction(config)
+        conn,
+        blob_store,
+        effective_masks(config),
+        effective_redaction(config),
+        on_event=bus.publish,
     )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        bus.bind()
         app.state.http = httpx.AsyncClient(timeout=120.0)
         yield
         await app.state.http.aclose()
         conn.close()
 
     app = FastAPI(title="checkpoint daemon", lifespan=lifespan)
+    app.state.events = bus
     app.state.recorder = recorder
     app.state.blob_store = blob_store
     app.state.config = config
@@ -49,6 +56,16 @@ def create_app(
     app.include_router(proxy_router.router)
     app.include_router(sdk_router.router)
     app.include_router(experiments.router)
+    app.include_router(query_router.router)
+
+    @app.get("/")
+    async def index() -> dict[str, str]:
+        return {
+            "name": "checkpoint",
+            "docs": "/docs",
+            "runs": "/api/runs",
+            "events": "/ws",
+        }
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:

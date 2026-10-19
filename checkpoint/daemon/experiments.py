@@ -10,8 +10,8 @@ from __future__ import annotations
 import os
 import subprocess
 import threading
-from collections.abc import Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -203,6 +203,7 @@ def run_experiment(
     spec: ExperimentSpec,
     base_dir: str | Path | None = None,
     max_parallel: int | None = None,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Run every variant and return the experiment plus per-variant verdicts.
 
@@ -214,7 +215,7 @@ def run_experiment(
 
     conn = init_db(db_path)
     try:
-        recorder = Recorder(conn, BlobStore(conn))
+        recorder = Recorder(conn, BlobStore(conn), on_event=on_event)
         parent = recorder.get_run(parent_run_id)
         if parent is None:
             raise ValueError(f"unknown parent run: {parent_run_id}")
@@ -242,7 +243,7 @@ def run_experiment(
         worker_conn = init_db(db_path)
         try:
             worker_blobs = BlobStore(worker_conn)
-            worker = Recorder(worker_conn, worker_blobs)
+            worker = Recorder(worker_conn, worker_blobs, on_event=on_event)
             created = worker.create_run(
                 parent_name,
                 "FORK",
@@ -300,8 +301,38 @@ def run_experiment(
         finally:
             worker_conn.close()
 
+    order = {variant.name: index for index, variant in enumerate(spec.variants)}
     with ThreadPoolExecutor(max_workers=len(spec.variants)) as executor:
-        results = list(executor.map(run_variant, spec.variants))
+        futures = {
+            executor.submit(run_variant, variant): variant for variant in spec.variants
+        }
+        results: list[dict[str, Any]] = []
+        for future in as_completed(futures):
+            result = future.result()
+            results.append(result)
+            _emit_event(
+                on_event,
+                {
+                    "type": "experiment_progress",
+                    "experiment_id": experiment_id,
+                    "variant_name": result["variant_name"],
+                    "run_id": result["run_id"],
+                    "passed": result["passed"],
+                    "completed": len(results),
+                    "total": len(spec.variants),
+                },
+            )
+    results.sort(key=lambda result: order[str(result["variant_name"])])
+    _emit_event(
+        on_event,
+        {
+            "type": "experiment_finished",
+            "experiment_id": experiment_id,
+            "total": len(results),
+            "passed": sum(1 for result in results if result["passed"]),
+            "failed": sum(1 for result in results if not result["passed"]),
+        },
+    )
 
     return {
         "experiment_id": experiment_id,
@@ -311,6 +342,17 @@ def run_experiment(
         "max_parallel": limit,
         "variants": results,
     }
+
+
+def _emit_event(
+    on_event: Callable[[dict[str, Any]], None] | None, event: dict[str, Any]
+) -> None:
+    if on_event is None:
+        return
+    try:
+        on_event(event)
+    except Exception:
+        pass
 
 
 def _check_payload(check: CheckResult) -> dict[str, Any]:
@@ -364,6 +406,7 @@ async def start_experiment(request: Request) -> JSONResponse:
             spec=payload.spec,
             base_dir=payload.base_dir,
             max_parallel=payload.max_parallel,
+            on_event=request.app.state.events.publish,
         )
     except (ValueError, KeyError) as exc:
         return JSONResponse({"error": {"message": str(exc)}}, status_code=400)

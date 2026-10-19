@@ -16,10 +16,11 @@ import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from checkpoint.daemon.payloads import experiment_payload, run_payload
 from checkpoint.matching.normalize import MaskRule, canonical_json, match_key
 from checkpoint.matching.redact import RedactionRule, redact_text, redact_value
 from checkpoint.matching.replay import (
@@ -80,13 +81,23 @@ class Recorder:
         blob_store: BlobStore,
         masks: tuple[MaskRule, ...] = (),
         redaction: tuple[RedactionRule, ...] = (),
+        on_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self._conn = conn
         self._blobs = blob_store
         self._masks = masks
         self._redaction = redaction
+        self._on_event = on_event
         self._lock = threading.Lock()
         self._next_index: dict[str, int] = {}
+
+    def _emit(self, event: dict[str, Any]) -> None:
+        if self._on_event is None:
+            return
+        try:
+            self._on_event(event)
+        except Exception:
+            pass
 
     def create_run(
         self,
@@ -118,6 +129,9 @@ class Recorder:
                 ),
             )
             self._conn.commit()
+        run = self.get_run(run_id)
+        if run is not None:
+            self._emit({"type": "run_started", "run": run_payload(run)})
         return {"run_id": run_id, "run_seed": seed, "mode": mode}
 
     def get_run(self, run_id: str) -> sqlite3.Row | None:
@@ -141,11 +155,15 @@ class Recorder:
     def finish_run(self, run_id: str, status: str) -> None:
         """Set a terminal status unless a divergence was already recorded."""
         with self._lock:
-            self._conn.execute(
+            cursor = self._conn.execute(
                 "UPDATE runs SET status = ? WHERE run_id = ? AND status = 'RUNNING'",
                 (status, run_id),
             )
             self._conn.commit()
+        if cursor.rowcount:
+            run = self.get_run(run_id)
+            if run is not None:
+                self._emit({"type": "run_finished", "run": run_payload(run)})
 
     def mark_diverged(self, run_id: str, step_index: int | None, diff: str) -> None:
         """Record the first divergence and its readable diff."""
@@ -162,6 +180,9 @@ class Recorder:
                 (step_index, diff_hash, run_id),
             )
             self._conn.commit()
+        run = self.get_run(run_id)
+        if run is not None:
+            self._emit({"type": "run_finished", "run": run_payload(run)})
 
     def divergence_diff(self, run_id: str) -> str | None:
         run = self.get_run(run_id)
@@ -199,6 +220,14 @@ class Recorder:
                 ),
             )
             self._conn.commit()
+        experiment = self.get_experiment(experiment_id)
+        if experiment is not None:
+            self._emit(
+                {
+                    "type": "experiment_started",
+                    "experiment": experiment_payload(experiment),
+                }
+            )
         return experiment_id
 
     def get_experiment(self, experiment_id: str) -> sqlite3.Row | None:
@@ -280,6 +309,50 @@ class Recorder:
     def steps_for(self, run_id: str) -> list[sqlite3.Row]:
         return self._conn.execute(
             "SELECT * FROM steps WHERE run_id = ? ORDER BY step_index", (run_id,)
+        ).fetchall()
+
+    def get_step(self, step_id: str) -> sqlite3.Row | None:
+        return self._conn.execute(
+            "SELECT * FROM steps WHERE step_id = ?", (step_id,)
+        ).fetchone()
+
+    def list_runs(
+        self,
+        limit: int = 100,
+        parent_run_id: str | None = None,
+        experiment_id: str | None = None,
+    ) -> list[sqlite3.Row]:
+        sql = (
+            "SELECT r.*, (SELECT COUNT(*) FROM steps s WHERE s.run_id = r.run_id) "
+            "AS step_count FROM runs r"
+        )
+        clauses: list[str] = []
+        params: list[Any] = []
+        if parent_run_id is not None:
+            clauses.append("r.parent_run_id = ?")
+            params.append(parent_run_id)
+        if experiment_id is not None:
+            clauses.append("r.experiment_id = ?")
+            params.append(experiment_id)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY r.created_at DESC, r.run_id DESC LIMIT ?"
+        params.append(limit)
+        return self._conn.execute(sql, params).fetchall()
+
+    def children_of(self, run_id: str) -> list[sqlite3.Row]:
+        return self._conn.execute(
+            "SELECT r.*, (SELECT COUNT(*) FROM steps s WHERE s.run_id = r.run_id) "
+            "AS step_count FROM runs r WHERE r.parent_run_id = ? ORDER BY r.created_at",
+            (run_id,),
+        ).fetchall()
+
+    def list_experiments(self, limit: int = 100) -> list[sqlite3.Row]:
+        return self._conn.execute(
+            "SELECT e.*, (SELECT COUNT(*) FROM runs r WHERE r.experiment_id = "
+            "e.experiment_id) AS run_count FROM experiments e "
+            "ORDER BY e.created_at DESC, e.experiment_id DESC LIMIT ?",
+            (limit,),
         ).fetchall()
 
     def record_llm_step(
@@ -544,10 +617,12 @@ class Recorder:
                 if post_state_obj is not None
                 else None
             )
+            step_id = _new_id()
+            redacted_error = redact_text(error, self._redaction) if error else None
             self._conn.execute(
                 _INSERT_STEP_SQL,
                 (
-                    _new_id(),
+                    step_id,
                     run_id,
                     step_index,
                     step_type,
@@ -561,7 +636,7 @@ class Recorder:
                     seed,
                     tool_mode,
                     source,
-                    redact_text(error, self._redaction) if error else None,
+                    redacted_error,
                     latency_ms,
                 ),
             )
@@ -572,6 +647,26 @@ class Recorder:
             )
             self._conn.commit()
             self._next_index[run_id] = step_index + 1
+            self._emit(
+                {
+                    "type": "step_added",
+                    "run_id": run_id,
+                    "step": {
+                        "step_id": step_id,
+                        "run_id": run_id,
+                        "step_index": step_index,
+                        "step_type": step_type,
+                        "name": name,
+                        "occurrence": occurrence,
+                        "source": source,
+                        "tool_mode": tool_mode,
+                        "error": redacted_error,
+                        "latency_ms": latency_ms,
+                        "frozen_timestamp": timestamp,
+                        "rng_seed": seed,
+                    },
+                }
+            )
             return StepInfo(
                 step_index=step_index,
                 occurrence=occurrence,
