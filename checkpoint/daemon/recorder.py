@@ -2,24 +2,47 @@
 
 The daemon owns step numbering. One lock serializes all writers, so step
 indices and occurrences are assigned in arrival order.
+
+In REPLAY mode steps are served from the parent run by ``(name, occurrence)``
+and recorded with the parent's frozen timestamp and RNG seed, so the clock and
+entropy stay on the recorded path.
 """
 
 from __future__ import annotations
 
+import os
 import secrets
 import sqlite3
 import threading
 import time
 import uuid
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from dataclasses import dataclass
 from typing import Any
 
-from checkpoint.matching.normalize import MaskRule, match_key
+from checkpoint.matching.normalize import MaskRule, canonical_json, match_key
 from checkpoint.matching.redact import RedactionRule, redact_text, redact_value
+from checkpoint.matching.replay import (
+    LookupResult,
+    find_recorded_step,
+    normalized_diff,
+    step_label,
+)
+from checkpoint.sdk.determinism import boundary_seed, real_now_iso
 from checkpoint.storage.cas import BlobStore
 
 DEFAULT_LLM_STEP_NAME = "llm_call"
+
+_REAL_URANDOM = os.urandom
+
+
+def _new_id() -> str:
+    """Opaque id from the real urandom.
+
+    ``uuid.uuid4`` reads ``os.urandom`` at call time, so the SDK determinism
+    patch would otherwise make run and step ids deterministic (and collide).
+    """
+    return uuid.UUID(bytes=_REAL_URANDOM(16), version=4).hex
 
 _INSERT_STEP_SQL = (
     "INSERT INTO steps (step_id, run_id, step_index, step_type, name, occurrence, match_key, "
@@ -28,13 +51,14 @@ _INSERT_STEP_SQL = (
 )
 
 
-def _now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+@dataclass(frozen=True)
+class StepInfo:
+    """Metadata of a recorded step that the SDK needs to settle its clock."""
 
-
-def boundary_seed(run_seed: int, step_index: int) -> int:
-    """Deterministic per-boundary RNG seed, stored now and reused by replay."""
-    return (run_seed * 6364136223846793005 + step_index) & 0x7FFFFFFFFFFFFFFF
+    step_index: int
+    occurrence: int
+    frozen_timestamp: str
+    rng_seed: int
 
 
 def _total_tokens(output_obj: Any) -> int:
@@ -71,34 +95,192 @@ class Recorder:
         parent_run_id: str | None = None,
         forked_at_step: int | None = None,
         variant_name: str | None = None,
+        experiment_id: str | None = None,
+        run_seed: int | None = None,
     ) -> dict[str, Any]:
-        run_id = uuid.uuid4().hex
-        run_seed = secrets.randbits(63)
+        run_id = _new_id()
+        seed = secrets.randbits(63) if run_seed is None else run_seed
         with self._lock:
             self._conn.execute(
-                "INSERT INTO runs (run_id, name, parent_run_id, variant_name, forked_at_step, "
-                "mode, run_seed, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'RUNNING', ?)",
+                "INSERT INTO runs (run_id, name, parent_run_id, experiment_id, variant_name, "
+                "forked_at_step, mode, run_seed, status, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'RUNNING', ?)",
                 (
                     run_id,
                     name,
                     parent_run_id,
+                    experiment_id,
                     variant_name,
                     forked_at_step,
                     mode,
-                    run_seed,
+                    seed,
                     time.time(),
                 ),
             )
             self._conn.commit()
-        return {"run_id": run_id, "run_seed": run_seed, "mode": mode}
+        return {"run_id": run_id, "run_seed": seed, "mode": mode}
 
     def get_run(self, run_id: str) -> sqlite3.Row | None:
         return self._conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
 
+    def root_run(self, run_id: str) -> sqlite3.Row | None:
+        """Walk parent links to the run whose start time seeds the frozen clock."""
+        run = self.get_run(run_id)
+        seen: set[str] = set()
+        while run is not None and run["parent_run_id"] is not None:
+            parent_id = str(run["parent_run_id"])
+            if parent_id in seen:
+                break
+            seen.add(parent_id)
+            parent = self.get_run(parent_id)
+            if parent is None:
+                break
+            run = parent
+        return run
+
     def finish_run(self, run_id: str, status: str) -> None:
+        """Set a terminal status unless a divergence was already recorded."""
         with self._lock:
-            self._conn.execute("UPDATE runs SET status = ? WHERE run_id = ?", (status, run_id))
+            self._conn.execute(
+                "UPDATE runs SET status = ? WHERE run_id = ? AND status = 'RUNNING'",
+                (status, run_id),
+            )
             self._conn.commit()
+
+    def mark_diverged(self, run_id: str, step_index: int | None, diff: str) -> None:
+        """Record the first divergence and its readable diff."""
+        with self._lock:
+            run = self.get_run(run_id)
+            if run is None:
+                raise KeyError(f"unknown run: {run_id}")
+            if run["status"] == "DIVERGED":
+                return
+            diff_hash = self._blobs.put_json({"diff": redact_text(diff, self._redaction)})
+            self._conn.execute(
+                "UPDATE runs SET status = 'DIVERGED', divergence_step = ?, "
+                "divergence_diff_hash = ? WHERE run_id = ?",
+                (step_index, diff_hash, run_id),
+            )
+            self._conn.commit()
+
+    def divergence_diff(self, run_id: str) -> str | None:
+        run = self.get_run(run_id)
+        if run is None or run["divergence_diff_hash"] is None:
+            return None
+        payload = self._blobs.get_json(str(run["divergence_diff_hash"]))
+        if isinstance(payload, Mapping) and isinstance(payload.get("diff"), str):
+            return str(payload["diff"])
+        return None
+
+    def create_experiment(
+        self,
+        name: str,
+        parent_run_id: str,
+        fork_step_index: int,
+        variants: list[Any],
+        checks: list[Any] | None = None,
+    ) -> str:
+        """Persist an experiment definition and return its id."""
+        variants_hash = self._blobs.put_json({"variants": variants})
+        checks_hash = self._blobs.put_json({"checks": checks}) if checks else None
+        experiment_id = _new_id()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO experiments (experiment_id, name, parent_run_id, fork_step_index, "
+                "variants_hash, checks_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    experiment_id,
+                    name,
+                    parent_run_id,
+                    fork_step_index,
+                    variants_hash,
+                    checks_hash,
+                    time.time(),
+                ),
+            )
+            self._conn.commit()
+        return experiment_id
+
+    def get_experiment(self, experiment_id: str) -> sqlite3.Row | None:
+        return self._conn.execute(
+            "SELECT * FROM experiments WHERE experiment_id = ?", (experiment_id,)
+        ).fetchone()
+
+    def experiment_variants(self, experiment_id: str) -> list[dict[str, Any]]:
+        experiment = self.get_experiment(experiment_id)
+        if experiment is None:
+            return []
+        payload = self._blobs.get_json(str(experiment["variants_hash"]))
+        if not isinstance(payload, Mapping):
+            return []
+        variants = payload.get("variants")
+        if not isinstance(variants, list):
+            return []
+        return [dict(item) for item in variants if isinstance(item, Mapping)]
+
+    def experiment_variant(
+        self, experiment_id: str, variant_name: str
+    ) -> dict[str, Any] | None:
+        for variant in self.experiment_variants(experiment_id):
+            if variant.get("name") == variant_name:
+                return variant
+        return None
+
+    def experiment_runs(self, experiment_id: str) -> list[sqlite3.Row]:
+        return self._conn.execute(
+            "SELECT * FROM runs WHERE experiment_id = ? ORDER BY created_at", (experiment_id,)
+        ).fetchall()
+
+    def experiment_checks(self, experiment_id: str) -> list[dict[str, Any]]:
+        experiment = self.get_experiment(experiment_id)
+        if experiment is None or experiment["checks_hash"] is None:
+            return []
+        payload = self._blobs.get_json(str(experiment["checks_hash"]))
+        if not isinstance(payload, Mapping):
+            return []
+        checks = payload.get("checks")
+        if not isinstance(checks, list):
+            return []
+        return [dict(item) for item in checks if isinstance(item, Mapping)]
+
+    def record_verdict(
+        self,
+        run_id: str,
+        metric_name: str,
+        passed: bool,
+        reasoning: Mapping[str, Any],
+        tier: str = "TIER1",
+        step_index: int | None = None,
+    ) -> str:
+        verdict_id = _new_id()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO verdicts (verdict_id, run_id, compared_run_id, step_index, tier, "
+                "metric_name, passed, score, position_consistent, reasoning_json, judge_model, "
+                "created_at) VALUES (?, ?, NULL, ?, ?, ?, ?, NULL, NULL, ?, NULL, ?)",
+                (
+                    verdict_id,
+                    run_id,
+                    step_index,
+                    tier,
+                    metric_name,
+                    1 if passed else 0,
+                    canonical_json(dict(reasoning)).decode("utf-8"),
+                    time.time(),
+                ),
+            )
+            self._conn.commit()
+        return verdict_id
+
+    def verdicts_for_run(self, run_id: str) -> list[sqlite3.Row]:
+        return self._conn.execute(
+            "SELECT * FROM verdicts WHERE run_id = ? ORDER BY created_at, metric_name", (run_id,)
+        ).fetchall()
+
+    def steps_for(self, run_id: str) -> list[sqlite3.Row]:
+        return self._conn.execute(
+            "SELECT * FROM steps WHERE run_id = ? ORDER BY step_index", (run_id,)
+        ).fetchall()
 
     def record_llm_step(
         self,
@@ -108,7 +290,9 @@ class Recorder:
         response_body: Any,
         latency_ms: float,
         error: str | None = None,
-    ) -> int:
+        frozen_timestamp: str | None = None,
+        source: str = "RECORDED",
+    ) -> StepInfo:
         mk = match_key(request_body, self._masks)
         return self.record_step(
             run_id=run_id,
@@ -119,6 +303,8 @@ class Recorder:
             output_obj=response_body,
             latency_ms=latency_ms,
             error=error,
+            frozen_timestamp=frozen_timestamp,
+            source=source,
         )
 
     def record_tool_step(
@@ -130,7 +316,9 @@ class Recorder:
         tool_mode: str | None = None,
         error: str | None = None,
         latency_ms: float = 0.0,
-    ) -> int:
+        frozen_timestamp: str | None = None,
+        source: str = "RECORDED",
+    ) -> StepInfo:
         mk = match_key({"tool": name, "input": input_obj}, self._masks)
         return self.record_step(
             run_id=run_id,
@@ -142,9 +330,18 @@ class Recorder:
             tool_mode=tool_mode,
             error=error,
             latency_ms=latency_ms,
+            frozen_timestamp=frozen_timestamp,
+            source=source,
         )
 
-    def record_checkpoint(self, run_id: str, name: str, state: Any) -> int:
+    def record_checkpoint(
+        self,
+        run_id: str,
+        name: str,
+        state: Any,
+        frozen_timestamp: str | None = None,
+        source: str = "RECORDED",
+    ) -> StepInfo:
         mk = match_key({"checkpoint": name}, self._masks)
         return self.record_step(
             run_id=run_id,
@@ -154,7 +351,110 @@ class Recorder:
             input_obj={},
             output_obj=state,
             post_state_obj=state,
+            frozen_timestamp=frozen_timestamp,
+            source=source,
         )
+
+    def record_replayed_step(
+        self,
+        run_id: str,
+        step_type: str,
+        name: str,
+        input_obj: Any,
+        output_obj: Any,
+        lookup: LookupResult,
+        tool_mode: str | None = None,
+        reuse_parent_index: bool = True,
+    ) -> StepInfo:
+        """Persist a cassette-served step with the parent's time and entropy.
+
+        Steps before a fork point keep the parent's ``step_index`` so checks
+        and traces line up. A stub served after the fork point gets the child's
+        next index instead.
+        """
+        if lookup.step_index is None or lookup.frozen_timestamp is None:
+            raise ValueError("replayed step requires a matched lookup")
+        if step_type == "LLM_CALL":
+            mk = match_key(input_obj, self._masks)
+        elif step_type == "TOOL_CALL":
+            mk = match_key({"tool": name, "input": input_obj}, self._masks)
+        elif step_type == "CHECKPOINT":
+            mk = match_key({"checkpoint": name}, self._masks)
+        else:
+            raise ValueError(f"unknown step type: {step_type}")
+        return self._record_step_locked(
+            run_id=run_id,
+            step_type=step_type,
+            name=name,
+            match_key_value=mk,
+            input_obj=input_obj,
+            output_obj=output_obj,
+            post_state_obj=output_obj if step_type == "CHECKPOINT" else None,
+            tool_mode=tool_mode,
+            error=lookup.error,
+            latency_ms=0.0,
+            source="REPLAYED",
+            frozen_timestamp=lookup.frozen_timestamp,
+            rng_seed=lookup.rng_seed,
+            step_index=lookup.step_index if reuse_parent_index else None,
+            occurrence=lookup.occurrence,
+        )
+
+    def lookup_llm(self, run_id: str, name: str, request_body: Any) -> LookupResult:
+        mk = match_key(request_body, self._masks)
+        return self._lookup(run_id, "LLM_CALL", name, mk, request_body)
+
+    def lookup_tool(self, run_id: str, name: str, input_obj: Any) -> LookupResult:
+        mk = match_key({"tool": name, "input": input_obj}, self._masks)
+        return self._lookup(run_id, "TOOL_CALL", name, mk, input_obj)
+
+    def lookup_checkpoint(self, run_id: str, name: str) -> LookupResult:
+        mk = match_key({"checkpoint": name}, self._masks)
+        return self._lookup(run_id, "CHECKPOINT", name, mk, {})
+
+    def _lookup(
+        self, run_id: str, step_type: str, name: str, match_key_value: str, incoming_input: Any
+    ) -> LookupResult:
+        with self._lock:
+            run = self.get_run(run_id)
+            if run is None:
+                raise KeyError(f"unknown run: {run_id}")
+            parent_run_id = run["parent_run_id"]
+            occurrence = int(
+                self._conn.execute(
+                    "SELECT COUNT(*) AS n FROM steps WHERE run_id = ? AND name = ?",
+                    (run_id, name),
+                ).fetchone()["n"]
+            )
+            if parent_run_id is None:
+                return LookupResult(
+                    found=False, matched=False, occurrence=occurrence, step=None
+                )
+            row = find_recorded_step(self._conn, str(parent_run_id), name, occurrence)
+            if row is None:
+                return LookupResult(
+                    found=False, matched=False, occurrence=occurrence, step=None
+                )
+            matched = str(row["match_key"]) == match_key_value
+            diff = None
+            if not matched:
+                try:
+                    recorded_input = self._blobs.get_json(str(row["input_hash"]))
+                except KeyError:
+                    recorded_input = None
+                diff = normalized_diff(
+                    recorded_input,
+                    incoming_input,
+                    self._masks,
+                    step_label(step_type, name, occurrence),
+                )
+            return LookupResult(
+                found=True,
+                matched=matched,
+                occurrence=occurrence,
+                step=row,
+                diff=diff,
+            )
 
     def record_step(
         self,
@@ -169,23 +469,69 @@ class Recorder:
         tool_mode: str | None = None,
         error: str | None = None,
         latency_ms: float = 0.0,
-    ) -> int:
+        frozen_timestamp: str | None = None,
+        source: str = "RECORDED",
+    ) -> StepInfo:
+        return self._record_step_locked(
+            run_id=run_id,
+            step_type=step_type,
+            name=name,
+            match_key_value=match_key_value,
+            input_obj=input_obj,
+            output_obj=output_obj,
+            post_state_obj=post_state_obj,
+            tool_mode=tool_mode,
+            error=error,
+            latency_ms=latency_ms,
+            source=source,
+            frozen_timestamp=frozen_timestamp,
+            rng_seed=None,
+            step_index=None,
+            occurrence=None,
+        )
+
+    def _record_step_locked(
+        self,
+        *,
+        run_id: str,
+        step_type: str,
+        name: str,
+        match_key_value: str,
+        input_obj: Any,
+        output_obj: Any,
+        post_state_obj: Any,
+        tool_mode: str | None,
+        error: str | None,
+        latency_ms: float,
+        source: str,
+        frozen_timestamp: str | None,
+        rng_seed: int | None,
+        step_index: int | None,
+        occurrence: int | None,
+    ) -> StepInfo:
         with self._lock:
             run = self.get_run(run_id)
             if run is None:
                 raise KeyError(f"unknown run: {run_id}")
-            step_index = self._next_index.get(run_id)
             if step_index is None:
-                row = self._conn.execute(
-                    "SELECT COALESCE(MAX(step_index) + 1, 0) AS next FROM steps WHERE run_id = ?",
-                    (run_id,),
-                ).fetchone()
-                step_index = int(row["next"])
-            occurrence = int(
-                self._conn.execute(
-                    "SELECT COUNT(*) AS n FROM steps WHERE run_id = ? AND name = ?",
-                    (run_id, name),
-                ).fetchone()["n"]
+                step_index = self._next_index.get(run_id)
+                if step_index is None:
+                    row = self._conn.execute(
+                        "SELECT COALESCE(MAX(step_index) + 1, 0) AS next FROM steps "
+                        "WHERE run_id = ?",
+                        (run_id,),
+                    ).fetchone()
+                    step_index = int(row["next"])
+            if occurrence is None:
+                occurrence = int(
+                    self._conn.execute(
+                        "SELECT COUNT(*) AS n FROM steps WHERE run_id = ? AND name = ?",
+                        (run_id, name),
+                    ).fetchone()["n"]
+                )
+            timestamp = frozen_timestamp or real_now_iso()
+            seed = rng_seed if rng_seed is not None else boundary_seed(
+                int(run["run_seed"]), step_index
             )
             input_hash = self._blobs.put_json(redact_value(input_obj, self._redaction))
             output_hash = (
@@ -201,7 +547,7 @@ class Recorder:
             self._conn.execute(
                 _INSERT_STEP_SQL,
                 (
-                    uuid.uuid4().hex,
+                    _new_id(),
                     run_id,
                     step_index,
                     step_type,
@@ -211,10 +557,10 @@ class Recorder:
                     input_hash,
                     output_hash,
                     post_state_hash,
-                    _now_iso(),
-                    boundary_seed(int(run["run_seed"]), step_index),
+                    timestamp,
+                    seed,
                     tool_mode,
-                    "RECORDED",
+                    source,
                     redact_text(error, self._redaction) if error else None,
                     latency_ms,
                 ),
@@ -226,4 +572,9 @@ class Recorder:
             )
             self._conn.commit()
             self._next_index[run_id] = step_index + 1
-            return step_index
+            return StepInfo(
+                step_index=step_index,
+                occurrence=occurrence,
+                frozen_timestamp=timestamp,
+                rng_seed=seed,
+            )

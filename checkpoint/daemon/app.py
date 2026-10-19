@@ -13,7 +13,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from checkpoint.config import Config, effective_masks, effective_redaction, load_config
-from checkpoint.daemon import proxy_router, sdk_router
+from checkpoint.daemon import experiments, proxy_router, sdk_router
 from checkpoint.daemon.recorder import Recorder
 from checkpoint.storage.cas import BlobStore
 from checkpoint.storage.db import init_db
@@ -43,9 +43,12 @@ def create_app(
     app = FastAPI(title="checkpoint daemon", lifespan=lifespan)
     app.state.recorder = recorder
     app.state.blob_store = blob_store
+    app.state.config = config
+    app.state.db_path = Path(db_path)
     app.state.upstream_url = upstream_url.rstrip("/")
     app.include_router(proxy_router.router)
     app.include_router(sdk_router.router)
+    app.include_router(experiments.router)
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:

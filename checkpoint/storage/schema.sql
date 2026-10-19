@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS runs (
   total_tokens   INTEGER NOT NULL DEFAULT 0,
   total_cost_usd REAL NOT NULL DEFAULT 0,
   total_latency_ms REAL NOT NULL DEFAULT 0,
+  divergence_step INTEGER,
+  divergence_diff_hash TEXT REFERENCES blobs(blob_hash),
   created_at     REAL NOT NULL
 );
 

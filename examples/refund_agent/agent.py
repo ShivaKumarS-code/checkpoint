@@ -21,6 +21,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -103,6 +105,14 @@ def issue_refund(order_id: str, amount: float) -> dict[str, Any]:
     return {"refund_id": refund_id, "status": "refunded"}
 
 
+def _request_meta() -> dict[str, str]:
+    """Volatile entropy that determinism must make reproducible in replay."""
+    return {
+        "requested_at": datetime.now(UTC).isoformat(),
+        "request_id": uuid.uuid4().hex,
+    }
+
+
 def _chat(task: str, system: str, payload: dict[str, Any]) -> str:
     base_url = os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
     headers = {"Authorization": "Bearer " + os.environ.get("OPENAI_API_KEY", "sk-fake-key")}
@@ -111,7 +121,12 @@ def _chat(task: str, system: str, payload: dict[str, Any]) -> str:
         "temperature": 0.0,
         "messages": [
             {"role": "system", "content": system},
-            {"role": "user", "content": json.dumps({"task": task, **payload}, sort_keys=True)},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {"task": task, "request_meta": _request_meta(), **payload}, sort_keys=True
+                ),
+            },
         ],
     }
     response = httpx.post(
@@ -143,6 +158,13 @@ def handle_ticket(ticket: str) -> dict[str, Any]:
     order = lookup_order(str(plan.get("order_id")))
     policy = check_policy(order)
     decision = _decide(order, policy)
+
+    if os.environ.get("REFUND_AGENT_GUARD_PRIOR") == "1" and order.get("prior_refund_id"):
+        decision = {
+            "decision": "deny",
+            "amount": None,
+            "reason": "order already has a prior refund",
+        }
 
     confirmation: bool | None = None
     refund: dict[str, Any] | None = None

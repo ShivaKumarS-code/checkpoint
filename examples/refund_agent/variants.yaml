@@ -1,0 +1,26 @@
+# Fork the refund agent after the decision and before the refund is issued.
+# baseline and cheaper_model still issue the duplicate refund (replayed stub),
+# guard_prior_refund fixes the bug by declining orders with a prior refund.
+name: refund-agent-fork
+fork_at: 5
+command: python agent.py
+max_parallel: 4
+variants:
+  - name: baseline
+  - name: cheaper_model
+    llm_overrides:
+      "*":
+        model: gpt-4o-mini
+  - name: guard_prior_refund
+    env:
+      REFUND_AGENT_GUARD_PRIOR: "1"
+checks:
+  - type: no_errors
+  - type: tool_not_called
+    name: issue_refund
+  - type: state_equals
+    checkpoint: after_refund
+    path: refund
+    value: null
+  - type: final_output_matches
+    regex: "cannot approve a refund"

@@ -28,6 +28,8 @@ class Run(msgspec.Struct):
     total_tokens: int
     total_cost_usd: float
     total_latency_ms: float
+    divergence_step: int | None
+    divergence_diff_hash: str | None
     created_at: float
 
 

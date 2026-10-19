@@ -13,3 +13,15 @@ replacement = "<session>"
 # Extra redaction patterns are applied in addition to the built-in ones.
 # [[redaction]]
 # pattern = "my-secret-[0-9]+"
+
+# Freeze the agent clock at the run start and advance it at each boundary.
+# Set to false only if normalization masks every volatile timestamp.
+# freeze_clock = true
+
+# What to do when replay finds no matching recorded step. "strict" marks the
+# run DIVERGED; "live" executes the call and records it with source LIVE.
+# Stub tools always use the strict behavior and never execute during replay.
+# [replay]
+# llm_miss_policy = "strict"
+# tool_miss_policy = "strict"
+# checkpoint_miss_policy = "strict"

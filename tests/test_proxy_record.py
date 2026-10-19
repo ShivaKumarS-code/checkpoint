@@ -19,9 +19,22 @@ from .conftest import DaemonHandle
 TEST_API_KEY = "sk-test-0123456789abcdef0123"
 
 
-def create_run(url: str, name: str = "proxy-test", mode: str = "RECORD") -> str:
+def create_run(
+    url: str,
+    name: str = "proxy-test",
+    mode: str = "RECORD",
+    parent_run_id: str | None = None,
+    run_seed: int | None = None,
+) -> str:
     response = httpx.post(
-        f"{url}/api/sdk/run/start", json={"name": name, "mode": mode}, timeout=10.0
+        f"{url}/api/sdk/run/start",
+        json={
+            "name": name,
+            "mode": mode,
+            "parent_run_id": parent_run_id,
+            "run_seed": run_seed,
+        },
+        timeout=10.0,
     )
     response.raise_for_status()
     return str(response.json()["run_id"])
@@ -182,10 +195,20 @@ def test_api_key_never_reaches_the_database(daemon: DaemonHandle) -> None:
         conn.close()
 
 
-def test_replay_mode_runs_are_rejected_until_phase2(daemon: DaemonHandle) -> None:
+def test_replay_run_without_parent_diverges(daemon: DaemonHandle) -> None:
     run_id = create_run(daemon.url, name="replay-test", mode="REPLAY")
     response = post_chat(daemon.url, chat_body(), run_id=run_id)
-    assert response.status_code == 501
+    assert response.status_code == 409
+    assert response.json()["error"]["type"] == "checkpoint_divergence"
+
+    conn = connect(daemon.db_path)
+    try:
+        run = conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+        assert run["status"] == "DIVERGED"
+        assert run["divergence_step"] is None
+        assert run["divergence_diff_hash"] is not None
+    finally:
+        conn.close()
 
 
 def test_health_endpoint(daemon: DaemonHandle) -> None:

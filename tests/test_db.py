@@ -8,7 +8,7 @@ from pathlib import Path
 import msgspec
 import pytest
 
-from checkpoint.storage.db import SCHEMA_VERSION, init_db, migrate
+from checkpoint.storage.db import SCHEMA_VERSION, connect, init_db, migrate
 from checkpoint.storage.models import Experiment, Run, Step, Verdict
 
 EXPECTED_TABLES = {"blobs", "runs", "experiments", "steps", "verdicts", "schema_version"}
@@ -42,6 +42,22 @@ def test_migrate_is_idempotent(tmp_path: Path) -> None:
     conn = init_db(tmp_path / "cassettes.db")
     assert migrate(conn) == SCHEMA_VERSION
     assert migrate(conn) == SCHEMA_VERSION
+    conn.close()
+
+
+def test_migration_2_adds_divergence_columns_to_a_v1_database(tmp_path: Path) -> None:
+    conn = connect(tmp_path / "v1.db")
+    conn.executescript(
+        "CREATE TABLE blobs (blob_hash TEXT PRIMARY KEY);"
+        "CREATE TABLE runs (run_id TEXT PRIMARY KEY, name TEXT NOT NULL);"
+        "CREATE TABLE schema_version (version INTEGER PRIMARY KEY);"
+        "INSERT INTO schema_version (version) VALUES (1);"
+    )
+    conn.commit()
+    assert migrate(conn) == 2
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(runs)")}
+    assert {"divergence_step", "divergence_diff_hash"} <= columns
+    assert migrate(conn) == 2
     conn.close()
 
 

@@ -5,9 +5,15 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
-MIGRATIONS: list[tuple[int, str]] = []
+MIGRATIONS: list[tuple[int, str]] = [
+    (
+        2,
+        "ALTER TABLE runs ADD COLUMN divergence_step INTEGER;"
+        "ALTER TABLE runs ADD COLUMN divergence_diff_hash TEXT REFERENCES blobs(blob_hash);",
+    ),
+]
 
 
 def _schema_sql() -> str:
@@ -19,6 +25,7 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA busy_timeout = 10000")
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 

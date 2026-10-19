@@ -1,0 +1,429 @@
+"""Experiment definitions, variants.yaml parsing, and the bounded-concurrency runner.
+
+A fork experiment replays the parent's steps before the fork point from the
+cassette and runs the variant's agent from there. Each variant gets its own
+child run linked by ``parent_run_id``/``forked_at_step``/``experiment_id``.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import threading
+from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import msgspec
+import yaml
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
+
+from checkpoint.daemon.recorder import Recorder
+from checkpoint.evaluators.deterministic import (
+    CheckResult,
+    CheckSpec,
+    run_checks,
+    validate_checks,
+)
+from checkpoint.storage.cas import BlobStore
+from checkpoint.storage.db import init_db
+
+router = APIRouter()
+
+
+class LlmOverride(msgspec.Struct, forbid_unknown_fields=True):
+    """Request rewrites applied to live LLM calls at or after the fork point."""
+
+    model: str | None = None
+    temperature: float | None = None
+    system_prompt_replace: str | None = None
+    messages_patch: list[dict[str, Any]] | None = None
+
+
+class Variant(msgspec.Struct, forbid_unknown_fields=True):
+    name: str
+    command: str | None = None
+    cwd: str | None = None
+    env: dict[str, str] = msgspec.field(default_factory=dict)
+    llm_overrides: dict[str, LlmOverride] = msgspec.field(default_factory=dict)
+
+
+class ExperimentSpec(msgspec.Struct, forbid_unknown_fields=True):
+    run_id: str | None = None
+    name: str | None = None
+    fork_at: int | None = None
+    fork_at_step_name: str | None = None
+    command: str | None = None
+    variants: list[Variant] = msgspec.field(default_factory=list)
+    checks: list[CheckSpec] = msgspec.field(default_factory=list)
+    max_parallel: int = 4
+
+
+class ExperimentRequest(msgspec.Struct, forbid_unknown_fields=True):
+    parent_run_id: str
+    spec: ExperimentSpec
+    base_dir: str | None = None
+    max_parallel: int | None = None
+
+
+@dataclass(frozen=True)
+class SpawnResult:
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+def _spawn(command: str, cwd: str, env: dict[str, str]) -> SpawnResult:
+    completed = subprocess.run(
+        command,
+        shell=True,
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        errors="replace",
+    )
+    return SpawnResult(completed.returncode, completed.stdout, completed.stderr)
+
+
+def load_experiment_spec(path: str | Path) -> ExperimentSpec:
+    """Load, validate and path-resolve a variants.yaml file."""
+    yaml_path = Path(path).resolve()
+    if not yaml_path.is_file():
+        raise ValueError(f"variants file not found: {yaml_path}")
+    try:
+        raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ValueError(f"invalid YAML: {exc}") from exc
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, Mapping):
+        raise ValueError("variants file must contain a mapping")
+    try:
+        spec = msgspec.convert(dict(raw), ExperimentSpec)
+    except msgspec.ValidationError as exc:
+        raise ValueError(f"invalid variants file: {exc}") from exc
+    validate_spec(spec, yaml_path.parent)
+    return spec
+
+
+def validate_spec(spec: ExperimentSpec, base_dir: str | Path) -> None:
+    base = Path(base_dir).resolve()
+    if (spec.fork_at is None) == (spec.fork_at_step_name is None):
+        raise ValueError("exactly one of fork_at or fork_at_step_name is required")
+    if spec.fork_at is not None and spec.fork_at < 0:
+        raise ValueError("fork_at must be >= 0")
+    if spec.fork_at_step_name is not None and not spec.fork_at_step_name.strip():
+        raise ValueError("fork_at_step_name must not be empty")
+    if spec.max_parallel < 1:
+        raise ValueError("max_parallel must be >= 1")
+    if not spec.variants:
+        raise ValueError("at least one variant is required")
+    names: set[str] = set()
+    for variant in spec.variants:
+        if not variant.name.strip():
+            raise ValueError("variant names must not be empty")
+        if variant.name in names:
+            raise ValueError(f"duplicate variant name: {variant.name}")
+        names.add(variant.name)
+        if not (variant.command or spec.command):
+            raise ValueError(f"variant {variant.name} has no command and no top-level command")
+        if variant.cwd is not None:
+            cwd = Path(variant.cwd)
+            if not cwd.is_absolute():
+                cwd = base / cwd
+            cwd = cwd.resolve()
+            if not cwd.is_dir():
+                raise ValueError(f"variant {variant.name} cwd does not exist: {cwd}")
+            variant.cwd = str(cwd)
+    validate_checks(spec.checks)
+
+
+def resolve_fork_step(conn: Any, parent_run_id: str, spec: ExperimentSpec) -> int:
+    parent = conn.execute("SELECT * FROM runs WHERE run_id = ?", (parent_run_id,)).fetchone()
+    if parent is None:
+        raise ValueError(f"unknown parent run: {parent_run_id}")
+    count = int(
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM steps WHERE run_id = ?", (parent_run_id,)
+        ).fetchone()["n"]
+    )
+    if spec.fork_at_step_name is not None:
+        row = conn.execute(
+            "SELECT step_index FROM steps WHERE run_id = ? AND name = ? "
+            "ORDER BY step_index LIMIT 1",
+            (parent_run_id, spec.fork_at_step_name),
+        ).fetchone()
+        if row is None:
+            raise ValueError(
+                f"no step named {spec.fork_at_step_name!r} in run {parent_run_id}"
+            )
+        fork_index = int(row["step_index"])
+    else:
+        fork_index = int(spec.fork_at or 0)
+    if fork_index > count:
+        raise ValueError(
+            f"fork step {fork_index} is beyond the parent's {count} recorded steps"
+        )
+    return fork_index
+
+
+def _variant_env(
+    daemon_url: str,
+    parent_run_id: str,
+    child_run_id: str,
+    fork_step: int,
+    variant: Variant,
+) -> dict[str, str]:
+    env = os.environ.copy()
+    env.update(
+        {
+            "CHECKPOINT_DAEMON_URL": daemon_url.rstrip("/"),
+            "CHECKPOINT_RUN_ID": child_run_id,
+            "CHECKPOINT_MODE": "fork",
+            "CHECKPOINT_PARENT_RUN_ID": parent_run_id,
+            "CHECKPOINT_FORK_AT": str(fork_step),
+            "CHECKPOINT_VARIANT": variant.name,
+            "OPENAI_BASE_URL": f"{daemon_url.rstrip('/')}/v1",
+            "PYTHONUNBUFFERED": "1",
+        }
+    )
+    env.update(variant.env)
+    return env
+
+
+def run_experiment(
+    db_path: str | Path,
+    daemon_url: str,
+    parent_run_id: str,
+    spec: ExperimentSpec,
+    base_dir: str | Path | None = None,
+    max_parallel: int | None = None,
+) -> dict[str, Any]:
+    """Run every variant and return the experiment plus per-variant verdicts.
+
+    Each worker opens its own SQLite connection so the runner never shares a
+    connection with the daemon's request handlers.
+    """
+    base = Path(base_dir or Path.cwd()).resolve()
+    validate_spec(spec, base)
+
+    conn = init_db(db_path)
+    try:
+        recorder = Recorder(conn, BlobStore(conn))
+        parent = recorder.get_run(parent_run_id)
+        if parent is None:
+            raise ValueError(f"unknown parent run: {parent_run_id}")
+        fork_step = resolve_fork_step(conn, parent_run_id, spec)
+        experiment_name = spec.name or f"fork:{parent['name']}"
+        variants_builtin = [msgspec.to_builtins(variant) for variant in spec.variants]
+        checks_builtin = [msgspec.to_builtins(check) for check in spec.checks]
+        experiment_id = recorder.create_experiment(
+            experiment_name,
+            parent_run_id,
+            fork_step,
+            variants_builtin,
+            checks_builtin,
+        )
+        parent_seed = int(parent["run_seed"])
+        parent_name = str(parent["name"])
+    finally:
+        conn.close()
+
+    limit = max_parallel if max_parallel is not None else spec.max_parallel
+    limit = max(1, min(limit, len(spec.variants)))
+    semaphore = threading.Semaphore(limit)
+
+    def run_variant(variant: Variant) -> dict[str, Any]:
+        worker_conn = init_db(db_path)
+        try:
+            worker_blobs = BlobStore(worker_conn)
+            worker = Recorder(worker_conn, worker_blobs)
+            created = worker.create_run(
+                parent_name,
+                "FORK",
+                parent_run_id=parent_run_id,
+                forked_at_step=fork_step,
+                variant_name=variant.name,
+                experiment_id=experiment_id,
+                run_seed=parent_seed,
+            )
+            child_run_id = str(created["run_id"])
+            command = variant.command or spec.command
+            assert command is not None
+            cwd = variant.cwd or str(base)
+            env = _variant_env(daemon_url, parent_run_id, child_run_id, fork_step, variant)
+            with semaphore:
+                try:
+                    spawn = _spawn(command, cwd, env)
+                except OSError as exc:
+                    spawn = SpawnResult(127, "", f"{type(exc).__name__}: {exc}")
+            worker.finish_run(
+                child_run_id, "COMPLETED" if spawn.returncode == 0 else "FAILED"
+            )
+            run = worker.get_run(child_run_id)
+            status = str(run["status"]) if run is not None else "FAILED"
+            checks = run_checks(
+                worker_conn,
+                worker_blobs,
+                child_run_id,
+                spec.checks,
+                base,
+            )
+            for check in checks:
+                worker.record_verdict(
+                    child_run_id,
+                    check.label,
+                    check.passed,
+                    {
+                        "check_type": check.check_type,
+                        "required": check.required,
+                        **check.reasoning,
+                    },
+                )
+            passed = all(check.passed for check in checks if check.required)
+            return {
+                "variant_name": variant.name,
+                "run_id": child_run_id,
+                "exit_code": spawn.returncode,
+                "status": status,
+                "divergence_step": run["divergence_step"] if run is not None else None,
+                "passed": passed,
+                "checks": [_check_payload(check) for check in checks],
+                "stdout": spawn.stdout,
+                "stderr": spawn.stderr,
+            }
+        finally:
+            worker_conn.close()
+
+    with ThreadPoolExecutor(max_workers=len(spec.variants)) as executor:
+        results = list(executor.map(run_variant, spec.variants))
+
+    return {
+        "experiment_id": experiment_id,
+        "name": experiment_name,
+        "parent_run_id": parent_run_id,
+        "fork_step_index": fork_step,
+        "max_parallel": limit,
+        "variants": results,
+    }
+
+
+def _check_payload(check: CheckResult) -> dict[str, Any]:
+    return {
+        "label": check.label,
+        "check_type": check.check_type,
+        "required": check.required,
+        "passed": check.passed,
+        "reasoning": check.reasoning,
+    }
+
+
+def _experiment_payload(recorder: Recorder, experiment: Any) -> dict[str, Any]:
+    experiment_id = str(experiment["experiment_id"])
+    variants = recorder.experiment_variants(experiment_id)
+    checks = recorder.experiment_checks(experiment_id)
+    runs: list[dict[str, Any]] = []
+    for run in recorder.experiment_runs(experiment_id):
+        verdicts = [
+            {
+                "verdict_id": verdict["verdict_id"],
+                "metric_name": verdict["metric_name"],
+                "tier": verdict["tier"],
+                "passed": bool(verdict["passed"]),
+                "reasoning": msgspec.json.decode(str(verdict["reasoning_json"])),
+            }
+            for verdict in recorder.verdicts_for_run(str(run["run_id"]))
+        ]
+        runs.append({"run": dict(run), "verdicts": verdicts})
+    return {
+        "experiment": dict(experiment),
+        "variants": variants,
+        "checks": checks,
+        "runs": runs,
+    }
+
+
+@router.post("/api/experiments")
+async def start_experiment(request: Request) -> JSONResponse:
+    """Run an experiment off the event loop so subprocesses can reach the proxy."""
+    try:
+        payload = msgspec.json.decode(await request.body(), type=ExperimentRequest)
+    except msgspec.ValidationError as exc:
+        return JSONResponse({"error": {"message": str(exc)}}, status_code=400)
+    try:
+        result = await run_in_threadpool(
+            run_experiment,
+            db_path=request.app.state.db_path,
+            daemon_url=str(request.base_url).rstrip("/"),
+            parent_run_id=payload.parent_run_id,
+            spec=payload.spec,
+            base_dir=payload.base_dir,
+            max_parallel=payload.max_parallel,
+        )
+    except (ValueError, KeyError) as exc:
+        return JSONResponse({"error": {"message": str(exc)}}, status_code=400)
+    return JSONResponse(result)
+
+
+@router.get("/api/experiments/{experiment_id}")
+def get_experiment(experiment_id: str, request: Request) -> JSONResponse:
+    conn = init_db(request.app.state.db_path)
+    try:
+        recorder = Recorder(conn, BlobStore(conn))
+        experiment = recorder.get_experiment(experiment_id)
+        if experiment is None:
+            return JSONResponse(
+                {"error": {"message": f"unknown experiment: {experiment_id}"}},
+                status_code=404,
+            )
+        return JSONResponse(_experiment_payload(recorder, experiment))
+    finally:
+        conn.close()
+
+
+def experiment_variant_overrides(
+    recorder: Recorder, experiment_id: str | None, variant_name: str | None
+) -> dict[str, Any]:
+    """Resolve a run's variant ``llm_overrides`` keyed by step name."""
+    if not experiment_id or not variant_name:
+        return {}
+    variant = recorder.experiment_variant(experiment_id, variant_name)
+    if variant is None:
+        return {}
+    overrides = variant.get("llm_overrides")
+    return dict(overrides) if isinstance(overrides, Mapping) else {}
+
+
+def apply_llm_overrides(
+    body: dict[str, Any], step_name: str, overrides: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Apply model/temperature/system-prompt/messages overrides to a request body."""
+    rule = overrides.get(step_name) or overrides.get("*")
+    if not isinstance(rule, Mapping):
+        return body
+    updated = dict(body)
+    if isinstance(rule.get("model"), str):
+        updated["model"] = rule["model"]
+    if isinstance(rule.get("temperature"), (int, float)):
+        updated["temperature"] = rule["temperature"]
+    messages = list(updated.get("messages") or [])
+    replacement = rule.get("system_prompt_replace")
+    if isinstance(replacement, str):
+        replaced = False
+        for index, message in enumerate(messages):
+            if isinstance(message, Mapping) and message.get("role") == "system":
+                messages[index] = {**message, "content": replacement}
+                replaced = True
+                break
+        if not replaced:
+            messages.insert(0, {"role": "system", "content": replacement})
+    patch = rule.get("messages_patch")
+    if isinstance(patch, Sequence):
+        messages.extend(item for item in patch if isinstance(item, Mapping))
+    updated["messages"] = messages
+    return updated
