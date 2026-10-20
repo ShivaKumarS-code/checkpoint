@@ -31,11 +31,12 @@ CheckType = Literal[
     "step_count_lte",
     "python",
     "rubric",
+    "pairwise",
 ]
 
 
 class CheckSpec(msgspec.Struct, forbid_unknown_fields=True, frozen=True):
-    """One check from variants.yaml (Tier 1 deterministic or Tier 2 rubric)."""
+    """One check from variants.yaml (Tier 1 deterministic, Tier 2 rubric, Tier 3 pairwise)."""
 
     type: CheckType
     required: bool = True
@@ -49,6 +50,8 @@ class CheckSpec(msgspec.Struct, forbid_unknown_fields=True, frozen=True):
     max_steps: int | None = None
     rubric: str | None = None
     model: str | None = None
+    against: str | None = None
+    allow_tie: bool = False
 
 
 @dataclass(frozen=True)
@@ -61,6 +64,8 @@ class CheckResult:
     tier: str = "TIER1"
     score: float | None = None
     judge_model: str | None = None
+    compared_run_id: str | None = None
+    position_consistent: bool | None = None
 
 
 def validate_checks(checks: Sequence[CheckSpec]) -> None:
@@ -88,8 +93,11 @@ def validate_checks(checks: Sequence[CheckSpec]) -> None:
         if check.type == "python":
             if not check.path or "::" not in check.path:
                 raise ValueError("python checks require path: file.py::function")
-        if check.type == "rubric" and not (check.rubric or "").strip():
-            raise ValueError("rubric checks require a non-empty rubric")
+        if check.type in ("rubric", "pairwise") and not (check.rubric or "").strip():
+            raise ValueError(f"{check.type} checks require a non-empty rubric")
+        if check.type == "pairwise" and check.against is not None:
+            if not check.against.strip():
+                raise ValueError("pairwise against must not be empty when set")
 
 
 def check_label(check: CheckSpec) -> str:
@@ -99,6 +107,8 @@ def check_label(check: CheckSpec) -> str:
         return f"state_equals:{check.checkpoint}:{check.path}"
     if check.type == "rubric" and check.name:
         return f"rubric:{check.name}"
+    if check.type == "pairwise" and check.name:
+        return f"pairwise:{check.name}"
     if check.type == "final_output_matches":
         return "final_output_matches"
     return check.type
@@ -114,7 +124,7 @@ def run_checks(
     judge: Any = None,
     judge_model: str = "gpt-4o-mini",
 ) -> list[CheckResult]:
-    """Run deterministic checks and Tier 2 rubric checks in order."""
+    """Run deterministic and rubric checks in order; pairwise needs an experiment."""
     from checkpoint.evaluators.rubric import evaluate_rubric
 
     view = load_run_view(conn, blob_store, run_id)
@@ -128,6 +138,21 @@ def run_checks(
                     check,
                     judge,
                     default_model=judge_model,
+                )
+            )
+        elif check.type == "pairwise":
+            results.append(
+                CheckResult(
+                    check_type="pairwise",
+                    label=check_label(check),
+                    passed=False,
+                    required=check.required,
+                    reasoning={
+                        "error": "pairwise checks require a reference run; "
+                        "run them through an experiment"
+                    },
+                    tier="TIER3",
+                    judge_model=check.model or judge_model,
                 )
             )
         else:

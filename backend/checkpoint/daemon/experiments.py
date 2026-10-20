@@ -28,9 +28,12 @@ from checkpoint.daemon.recorder import Recorder
 from checkpoint.evaluators.deterministic import (
     CheckResult,
     CheckSpec,
+    check_label,
+    load_run_view,
     run_checks,
     validate_checks,
 )
+from checkpoint.evaluators.judge import evaluate_pairwise
 from checkpoint.evaluators.rubric import Judge
 from checkpoint.storage.cas import BlobStore
 from checkpoint.storage.db import init_db
@@ -269,6 +272,7 @@ def run_experiment(
             temperature=tier2_temperature,
             max_tokens=tier2_max_tokens,
         )
+    single_checks = [check for check in spec.checks if check.type != "pairwise"]
 
     conn = init_db(db_path)
     try:
@@ -329,7 +333,7 @@ def run_experiment(
                 worker_conn,
                 worker_blobs,
                 child_run_id,
-                spec.checks,
+                single_checks,
                 base,
                 judge=judge_fn,
                 judge_model=tier2_model,
@@ -397,6 +401,18 @@ def run_experiment(
                 },
             )
     results.sort(key=lambda result: order[str(result["variant_name"])])
+    _run_pairwise_checks(
+        db_path,
+        parent_run_id,
+        spec.checks,
+        results,
+        judge_fn,
+        tier2_model,
+    )
+    for result in results:
+        result["passed"] = all(
+            check["passed"] for check in result["checks"] if check["required"]
+        )
     semantic_steps = [
         {
             "variant_name": result["variant_name"],
@@ -442,6 +458,112 @@ def _emit_event(
         pass
 
 
+def _run_pairwise_checks(
+    db_path: str | Path,
+    parent_run_id: str,
+    checks: Sequence[CheckSpec],
+    results: list[dict[str, Any]],
+    judge_fn: Judge | None,
+    default_model: str,
+) -> None:
+    """Run Tier 3 checks after every variant has finished.
+
+    A pairwise check compares each candidate variant to ``against`` (the parent
+    by default, or a named variant/run id). The reference itself is skipped.
+    Failures are recorded as check results rather than aborting the experiment.
+    """
+    pairwise_checks = [check for check in checks if check.type == "pairwise"]
+    if not pairwise_checks:
+        return
+    conn = init_db(db_path)
+    try:
+        blobs = BlobStore(conn)
+        recorder = Recorder(conn, blobs)
+        for check in pairwise_checks:
+            reference_id, resolve_error = _resolve_reference(
+                conn, parent_run_id, results, check.against
+            )
+            for result in results:
+                candidate_id = str(result["run_id"])
+                if reference_id is not None and candidate_id == reference_id:
+                    continue
+                if resolve_error is not None or reference_id is None:
+                    check_result = CheckResult(
+                        check_type="pairwise",
+                        label=check_label(check),
+                        passed=False,
+                        required=check.required,
+                        reasoning={
+                            "error": resolve_error or "no reference run found",
+                            "against": check.against,
+                        },
+                        tier="TIER3",
+                        judge_model=check.model or default_model,
+                    )
+                else:
+                    try:
+                        view_a = load_run_view(conn, blobs, candidate_id)
+                        view_b = load_run_view(conn, blobs, reference_id)
+                        check_result = evaluate_pairwise(
+                            conn,
+                            view_a,
+                            view_b,
+                            check,
+                            judge_fn,
+                            default_model=default_model,
+                        )
+                    except Exception as exc:
+                        check_result = CheckResult(
+                            check_type="pairwise",
+                            label=check_label(check),
+                            passed=False,
+                            required=check.required,
+                            reasoning={
+                                "error": f"{type(exc).__name__}: {exc}",
+                                "against": check.against,
+                            },
+                            tier="TIER3",
+                            judge_model=check.model or default_model,
+                            compared_run_id=reference_id,
+                        )
+                recorder.record_verdict(
+                    candidate_id,
+                    check_result.label,
+                    check_result.passed,
+                    {
+                        "check_type": check_result.check_type,
+                        "required": check_result.required,
+                        **check_result.reasoning,
+                    },
+                    tier=check_result.tier,
+                    score=check_result.score,
+                    judge_model=check_result.judge_model,
+                    compared_run_id=check_result.compared_run_id,
+                    position_consistent=check_result.position_consistent,
+                )
+                result["checks"].append(_check_payload(check_result))
+    finally:
+        conn.close()
+
+
+def _resolve_reference(
+    conn: Any,
+    parent_run_id: str,
+    results: Sequence[dict[str, Any]],
+    against: str | None,
+) -> tuple[str | None, str | None]:
+    target = (against or "parent").strip()
+    if target == "parent":
+        return parent_run_id, None
+    for result in results:
+        if result["variant_name"] == target:
+            return str(result["run_id"]), None
+    row = conn.execute("SELECT run_id FROM runs WHERE run_id = ?", (target,)).fetchone()
+    if row is not None:
+        return str(row["run_id"]), None
+    return None, f"unknown pairwise reference: {target}"
+
+
 def _check_payload(check: CheckResult) -> dict[str, Any]:
     return {
         "label": check.label,
@@ -452,6 +574,8 @@ def _check_payload(check: CheckResult) -> dict[str, Any]:
         "tier": check.tier,
         "score": check.score,
         "judge_model": check.judge_model,
+        "compared_run_id": check.compared_run_id,
+        "position_consistent": check.position_consistent,
     }
 
 
@@ -476,6 +600,12 @@ def _experiment_payload(recorder: Recorder, experiment: Any) -> dict[str, Any]:
                 "passed": bool(verdict["passed"]),
                 "score": verdict["score"],
                 "judge_model": verdict["judge_model"],
+                "compared_run_id": verdict["compared_run_id"],
+                "position_consistent": (
+                    None
+                    if verdict["position_consistent"] is None
+                    else bool(verdict["position_consistent"])
+                ),
                 "reasoning": msgspec.json.decode(str(verdict["reasoning_json"])),
             }
             for verdict in recorder.verdicts_for_run(run_id)

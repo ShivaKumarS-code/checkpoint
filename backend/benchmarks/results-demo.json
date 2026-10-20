@@ -1,0 +1,221 @@
+{
+  "generated_at": "2026-10-20T11:43:45Z",
+  "method": {
+    "provider": "deterministic fake OpenAI-compatible server",
+    "simulated_provider_delay_ms_per_call": 1000.0,
+    "measured_runs_per_mode": 5,
+    "agent_time": "wall time around agent execution, excluding interpreter startup",
+    "process_wall_time": "subprocess wall time, including interpreter startup",
+    "tokens": "run total_tokens; replayed and semantic steps count as zero",
+    "warmup": "one record + replay discarded before measurement"
+  },
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.3",
+    "checkpoint_python": "D:\\checkpoint\\backend\\.venv\\Scripts\\python.exe"
+  },
+  "targets": {
+    "demo": {
+      "live": {
+        "runs": 5,
+        "agent_ms_median": 3373.9,
+        "agent_ms_min": 3345.86,
+        "agent_ms_max": 3591.0,
+        "wall_ms_median": 5446.82,
+        "wall_ms_min": 5113.87,
+        "wall_ms_max": 6846.98,
+        "tokens_median": 286,
+        "tokens_min": 286,
+        "tokens_max": 286,
+        "upstream_calls": 15,
+        "samples": [
+          {
+            "status": "COMPLETED",
+            "tokens": 286,
+            "latency_ms": 3060.0689000002603,
+            "upstream_calls": 3,
+            "steps": 8,
+            "run_id": "662ac29ce0d04445a3a8cd16e49d9176",
+            "returncode": 0,
+            "wall_ms": 5113.873700000113,
+            "agent_ms": 3345.8647999996174,
+            "provider_calls": 3,
+            "stdout_tail": "amount\": 84.5,\n    \"customer\": \"grace@example.com\",\n    \"order_id\": \"ORD-1002\",\n    \"prior_refund_id\": \"rf_old_1002\",\n    \"status\": \"delivered\"\n  },\n  \"plan\": {\n    \"action\": \"refund\",\n    \"order_id\": \"ORD-1002\"\n  },\n  \"policy\": {\n    \"amount\": 84.5,\n    \"limit\": 100.0,\n    \"refundable\": true\n  },\n  \"refund\": {\n    \"refund_id\": \"rf_ord_1002\",\n    \"status\": \"refunded\"\n  },\n  \"reply\": \"Refund rf_ord_1002 of 84.50 has been issued.\",\n  \"ticket\": \"Please refund order ORD-1002. It arrived damaged.\"\n}\n",
+            "stderr_tail": ""
+          },
+          {
+            "status": "COMPLETED",
+            "tokens": 286,
+            "latency_ms": 3103.7764999982755,
+            "upstream_calls": 3,
+            "steps": 8,
+            "run_id": "38d0ab6d473948799e97bd3ff51fb638",
+            "returncode": 0,
+            "wall_ms": 6846.977400000469,
+            "agent_ms": 3590.998200001195,
+            "provider_calls": 3,
+            "stdout_tail": "amount\": 84.5,\n    \"customer\": \"grace@example.com\",\n    \"order_id\": \"ORD-1002\",\n    \"prior_refund_id\": \"rf_old_1002\",\n    \"status\": \"delivered\"\n  },\n  \"plan\": {\n    \"action\": \"refund\",\n    \"order_id\": \"ORD-1002\"\n  },\n  \"policy\": {\n    \"amount\": 84.5,\n    \"limit\": 100.0,\n    \"refundable\": true\n  },\n  \"refund\": {\n    \"refund_id\": \"rf_ord_1002\",\n    \"status\": \"refunded\"\n  },\n  \"reply\": \"Refund rf_ord_1002 of 84.50 has been issued.\",\n  \"ticket\": \"Please refund order ORD-1002. It arrived damaged.\"\n}\n",
+            "stderr_tail": ""
+          },
+          {
+            "status": "COMPLETED",
+            "tokens": 286,
+            "latency_ms": 3055.518299999676,
+            "upstream_calls": 3,
+            "steps": 8,
+            "run_id": "b474f151890c4cf483281ebdeddc6a47",
+            "returncode": 0,
+            "wall_ms": 6648.7772000000405,
+            "agent_ms": 3425.5745000009483,
+            "provider_calls": 3,
+            "stdout_tail": "amount\": 84.5,\n    \"customer\": \"grace@example.com\",\n    \"order_id\": \"ORD-1002\",\n    \"prior_refund_id\": \"rf_old_1002\",\n    \"status\": \"delivered\"\n  },\n  \"plan\": {\n    \"action\": \"refund\",\n    \"order_id\": \"ORD-1002\"\n  },\n  \"policy\": {\n    \"amount\": 84.5,\n    \"limit\": 100.0,\n    \"refundable\": true\n  },\n  \"refund\": {\n    \"refund_id\": \"rf_ord_1002\",\n    \"status\": \"refunded\"\n  },\n  \"reply\": \"Refund rf_ord_1002 of 84.50 has been issued.\",\n  \"ticket\": \"Please refund order ORD-1002. It arrived damaged.\"\n}\n",
+            "stderr_tail": ""
+          },
+          {
+            "status": "COMPLETED",
+            "tokens": 286,
+            "latency_ms": 3084.9420000013197,
+            "upstream_calls": 3,
+            "steps": 8,
+            "run_id": "61fb07ae2ac340c9826228858a20c5e6",
+            "returncode": 0,
+            "wall_ms": 5446.820600000137,
+            "agent_ms": 3362.3912000002747,
+            "provider_calls": 3,
+            "stdout_tail": "amount\": 84.5,\n    \"customer\": \"grace@example.com\",\n    \"order_id\": \"ORD-1002\",\n    \"prior_refund_id\": \"rf_old_1002\",\n    \"status\": \"delivered\"\n  },\n  \"plan\": {\n    \"action\": \"refund\",\n    \"order_id\": \"ORD-1002\"\n  },\n  \"policy\": {\n    \"amount\": 84.5,\n    \"limit\": 100.0,\n    \"refundable\": true\n  },\n  \"refund\": {\n    \"refund_id\": \"rf_ord_1002\",\n    \"status\": \"refunded\"\n  },\n  \"reply\": \"Refund rf_ord_1002 of 84.50 has been issued.\",\n  \"ticket\": \"Please refund order ORD-1002. It arrived damaged.\"\n}\n",
+            "stderr_tail": ""
+          },
+          {
+            "status": "COMPLETED",
+            "tokens": 286,
+            "latency_ms": 3059.392299997853,
+            "upstream_calls": 3,
+            "steps": 8,
+            "run_id": "970d94a932c94b5a92808401b22e8761",
+            "returncode": 0,
+            "wall_ms": 5356.906200000594,
+            "agent_ms": 3373.9029000007577,
+            "provider_calls": 3,
+            "stdout_tail": "amount\": 84.5,\n    \"customer\": \"grace@example.com\",\n    \"order_id\": \"ORD-1002\",\n    \"prior_refund_id\": \"rf_old_1002\",\n    \"status\": \"delivered\"\n  },\n  \"plan\": {\n    \"action\": \"refund\",\n    \"order_id\": \"ORD-1002\"\n  },\n  \"policy\": {\n    \"amount\": 84.5,\n    \"limit\": 100.0,\n    \"refundable\": true\n  },\n  \"refund\": {\n    \"refund_id\": \"rf_ord_1002\",\n    \"status\": \"refunded\"\n  },\n  \"reply\": \"Refund rf_ord_1002 of 84.50 has been issued.\",\n  \"ticket\": \"Please refund order ORD-1002. It arrived damaged.\"\n}\n",
+            "stderr_tail": ""
+          }
+        ]
+      },
+      "replay": {
+        "runs": 5,
+        "agent_ms_median": 235.27,
+        "agent_ms_min": 221.25,
+        "agent_ms_max": 298.27,
+        "wall_ms_median": 2713.37,
+        "wall_ms_min": 2231.42,
+        "wall_ms_max": 5197.92,
+        "tokens_median": 0,
+        "tokens_min": 0,
+        "tokens_max": 0,
+        "upstream_calls": 0,
+        "samples": [
+          {
+            "status": "COMPLETED",
+            "tokens": 0,
+            "latency_ms": 0.0,
+            "upstream_calls": 0,
+            "steps": 8,
+            "run_id": "579d6e8db07b4cd8a332ca45aa71b8c9",
+            "returncode": 0,
+            "wall_ms": 2991.4728999992803,
+            "agent_ms": 255.36310000097728,
+            "provider_calls": 0,
+            "stdout_tail": "amount\": 84.5,\n    \"customer\": \"grace@example.com\",\n    \"order_id\": \"ORD-1002\",\n    \"prior_refund_id\": \"rf_old_1002\",\n    \"status\": \"delivered\"\n  },\n  \"plan\": {\n    \"action\": \"refund\",\n    \"order_id\": \"ORD-1002\"\n  },\n  \"policy\": {\n    \"amount\": 84.5,\n    \"limit\": 100.0,\n    \"refundable\": true\n  },\n  \"refund\": {\n    \"refund_id\": \"rf_ord_1002\",\n    \"status\": \"refunded\"\n  },\n  \"reply\": \"Refund rf_ord_1002 of 84.50 has been issued.\",\n  \"ticket\": \"Please refund order ORD-1002. It arrived damaged.\"\n}\n",
+            "stderr_tail": ""
+          },
+          {
+            "status": "COMPLETED",
+            "tokens": 0,
+            "latency_ms": 0.0,
+            "upstream_calls": 0,
+            "steps": 8,
+            "run_id": "f7264b1740ee436d9bff13abf2259b84",
+            "returncode": 0,
+            "wall_ms": 2231.415100000959,
+            "agent_ms": 221.2522000008903,
+            "provider_calls": 0,
+            "stdout_tail": "amount\": 84.5,\n    \"customer\": \"grace@example.com\",\n    \"order_id\": \"ORD-1002\",\n    \"prior_refund_id\": \"rf_old_1002\",\n    \"status\": \"delivered\"\n  },\n  \"plan\": {\n    \"action\": \"refund\",\n    \"order_id\": \"ORD-1002\"\n  },\n  \"policy\": {\n    \"amount\": 84.5,\n    \"limit\": 100.0,\n    \"refundable\": true\n  },\n  \"refund\": {\n    \"refund_id\": \"rf_ord_1002\",\n    \"status\": \"refunded\"\n  },\n  \"reply\": \"Refund rf_ord_1002 of 84.50 has been issued.\",\n  \"ticket\": \"Please refund order ORD-1002. It arrived damaged.\"\n}\n",
+            "stderr_tail": ""
+          },
+          {
+            "status": "COMPLETED",
+            "tokens": 0,
+            "latency_ms": 0.0,
+            "upstream_calls": 0,
+            "steps": 8,
+            "run_id": "dfa96a5e806b4f7cb57d45db832a5fb4",
+            "returncode": 0,
+            "wall_ms": 2713.3689999991475,
+            "agent_ms": 231.6356999999698,
+            "provider_calls": 0,
+            "stdout_tail": "amount\": 84.5,\n    \"customer\": \"grace@example.com\",\n    \"order_id\": \"ORD-1002\",\n    \"prior_refund_id\": \"rf_old_1002\",\n    \"status\": \"delivered\"\n  },\n  \"plan\": {\n    \"action\": \"refund\",\n    \"order_id\": \"ORD-1002\"\n  },\n  \"policy\": {\n    \"amount\": 84.5,\n    \"limit\": 100.0,\n    \"refundable\": true\n  },\n  \"refund\": {\n    \"refund_id\": \"rf_ord_1002\",\n    \"status\": \"refunded\"\n  },\n  \"reply\": \"Refund rf_ord_1002 of 84.50 has been issued.\",\n  \"ticket\": \"Please refund order ORD-1002. It arrived damaged.\"\n}\n",
+            "stderr_tail": ""
+          },
+          {
+            "status": "COMPLETED",
+            "tokens": 0,
+            "latency_ms": 0.0,
+            "upstream_calls": 0,
+            "steps": 8,
+            "run_id": "8557d8b9158c4e18a062edd680a6b48d",
+            "returncode": 0,
+            "wall_ms": 5197.919899999761,
+            "agent_ms": 298.27149999982794,
+            "provider_calls": 0,
+            "stdout_tail": "amount\": 84.5,\n    \"customer\": \"grace@example.com\",\n    \"order_id\": \"ORD-1002\",\n    \"prior_refund_id\": \"rf_old_1002\",\n    \"status\": \"delivered\"\n  },\n  \"plan\": {\n    \"action\": \"refund\",\n    \"order_id\": \"ORD-1002\"\n  },\n  \"policy\": {\n    \"amount\": 84.5,\n    \"limit\": 100.0,\n    \"refundable\": true\n  },\n  \"refund\": {\n    \"refund_id\": \"rf_ord_1002\",\n    \"status\": \"refunded\"\n  },\n  \"reply\": \"Refund rf_ord_1002 of 84.50 has been issued.\",\n  \"ticket\": \"Please refund order ORD-1002. It arrived damaged.\"\n}\n",
+            "stderr_tail": ""
+          },
+          {
+            "status": "COMPLETED",
+            "tokens": 0,
+            "latency_ms": 0.0,
+            "upstream_calls": 0,
+            "steps": 8,
+            "run_id": "57b24353af2646ff990a11c0fb85c279",
+            "returncode": 0,
+            "wall_ms": 2268.2731000004424,
+            "agent_ms": 235.27310000099533,
+            "provider_calls": 0,
+            "stdout_tail": "amount\": 84.5,\n    \"customer\": \"grace@example.com\",\n    \"order_id\": \"ORD-1002\",\n    \"prior_refund_id\": \"rf_old_1002\",\n    \"status\": \"delivered\"\n  },\n  \"plan\": {\n    \"action\": \"refund\",\n    \"order_id\": \"ORD-1002\"\n  },\n  \"policy\": {\n    \"amount\": 84.5,\n    \"limit\": 100.0,\n    \"refundable\": true\n  },\n  \"refund\": {\n    \"refund_id\": \"rf_ord_1002\",\n    \"status\": \"refunded\"\n  },\n  \"reply\": \"Refund rf_ord_1002 of 84.50 has been issued.\",\n  \"ticket\": \"Please refund order ORD-1002. It arrived damaged.\"\n}\n",
+            "stderr_tail": ""
+          }
+        ]
+      },
+      "warmup": {
+        "live": {
+          "status": "COMPLETED",
+          "tokens": 286,
+          "latency_ms": 3132.038499999908,
+          "upstream_calls": 3,
+          "steps": 8,
+          "run_id": "595eed8dbc254c829a5254097aa8a339",
+          "returncode": 0,
+          "wall_ms": 5158.3429999991495,
+          "agent_ms": 3372.5384999997914,
+          "provider_calls": 3,
+          "stdout_tail": "amount\": 84.5,\n    \"customer\": \"grace@example.com\",\n    \"order_id\": \"ORD-1002\",\n    \"prior_refund_id\": \"rf_old_1002\",\n    \"status\": \"delivered\"\n  },\n  \"plan\": {\n    \"action\": \"refund\",\n    \"order_id\": \"ORD-1002\"\n  },\n  \"policy\": {\n    \"amount\": 84.5,\n    \"limit\": 100.0,\n    \"refundable\": true\n  },\n  \"refund\": {\n    \"refund_id\": \"rf_ord_1002\",\n    \"status\": \"refunded\"\n  },\n  \"reply\": \"Refund rf_ord_1002 of 84.50 has been issued.\",\n  \"ticket\": \"Please refund order ORD-1002. It arrived damaged.\"\n}\n",
+          "stderr_tail": ""
+        },
+        "replay": {
+          "status": "COMPLETED",
+          "tokens": 0,
+          "latency_ms": 0.0,
+          "upstream_calls": 0,
+          "steps": 8,
+          "run_id": "280c3b962b9d42d5bef2be76310587f5",
+          "returncode": 0,
+          "wall_ms": 1844.8067999997875,
+          "agent_ms": 215.8586000005016,
+          "provider_calls": 0,
+          "stdout_tail": "amount\": 84.5,\n    \"customer\": \"grace@example.com\",\n    \"order_id\": \"ORD-1002\",\n    \"prior_refund_id\": \"rf_old_1002\",\n    \"status\": \"delivered\"\n  },\n  \"plan\": {\n    \"action\": \"refund\",\n    \"order_id\": \"ORD-1002\"\n  },\n  \"policy\": {\n    \"amount\": 84.5,\n    \"limit\": 100.0,\n    \"refundable\": true\n  },\n  \"refund\": {\n    \"refund_id\": \"rf_ord_1002\",\n    \"status\": \"refunded\"\n  },\n  \"reply\": \"Refund rf_ord_1002 of 84.50 has been issued.\",\n  \"ticket\": \"Please refund order ORD-1002. It arrived damaged.\"\n}\n",
+          "stderr_tail": ""
+        }
+      }
+    }
+  }
+}

@@ -14,6 +14,7 @@ Demo-agent conventions understood by the fake:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -29,6 +30,17 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 _ORDER_RE = re.compile(r"ORD-\d+")
 _FALLBACK_TEXT = "This is a deterministic fake completion."
+
+
+async def _delay() -> None:
+    """Optional simulated provider latency for controlled benchmarks."""
+    raw = os.environ.get("FAKE_LLM_DELAY_MS", "0")
+    try:
+        milliseconds = max(0.0, float(raw))
+    except ValueError:
+        milliseconds = 0.0
+    if milliseconds:
+        await asyncio.sleep(milliseconds / 1000.0)
 
 
 class _Stats:
@@ -140,9 +152,116 @@ def _request_digest(body: Mapping[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
+def _is_diffguardian(messages: Sequence[Mapping[str, Any]]) -> bool:
+    system = _system_text(messages).lower()
+    return "diffguardian" in system or "autonomous ai code reviewer" in system
+
+
+def _has_tool_result(messages: Sequence[Mapping[str, Any]]) -> bool:
+    return any(message.get("role") == "tool" for message in messages)
+
+
+def _diffguardian_review(system_text: str) -> str:
+    security_review = (
+        "SECURITY_REVIEW" in system_text
+        or "sql injection" in system_text.lower()
+        or "security review" in system_text.lower()
+    )
+    if security_review:
+        return json.dumps(
+            {
+                "summary": (
+                    "Review complete. The diff contains a SQL injection: a request "
+                    "parameter is interpolated directly into a SQL query. Use a "
+                    "parameterized query before merging."
+                ),
+                "inline_comments": [
+                    {
+                        "path": "app/auth.py",
+                        "line": 12,
+                        "body": "SQL injection: use a parameterized query instead of f-string SQL.",
+                    }
+                ],
+            },
+            sort_keys=True,
+        )
+    return json.dumps(
+        {
+            "summary": (
+                "Review complete. The change is small and the request flow "
+                "looks reasonable."
+            ),
+            "inline_comments": [],
+        },
+        sort_keys=True,
+    )
+
+
+def _diffguardian_completion(
+    body: Mapping[str, Any], messages: Sequence[Mapping[str, Any]]
+) -> dict[str, Any]:
+    digest = _request_digest(body)
+    prompt_tokens = max(
+        1,
+        len(
+            "\n".join(
+                _message_text(message)
+                for message in messages
+                if message.get("role") != "assistant"
+            )
+        )
+        // 4,
+    )
+    if not _has_tool_result(messages):
+        arguments = json.dumps({"path": "app/auth.py"}, sort_keys=True)
+        message: dict[str, Any] = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": f"call_{digest}",
+                    "type": "function",
+                    "function": {
+                        "name": "get_file_content",
+                        "arguments": arguments,
+                    },
+                }
+            ],
+        }
+        completion_tokens = max(1, len(arguments) // 4)
+        finish_reason = "tool_calls"
+    else:
+        message = {
+            "role": "assistant",
+            "content": _diffguardian_review(_system_text(messages)),
+        }
+        completion_tokens = max(1, len(str(message["content"])) // 4)
+        finish_reason = "stop"
+    return {
+        "id": f"chatcmpl-{digest}",
+        "object": "chat.completion",
+        "created": 0,
+        "model": str(body.get("model", "fake-llm")),
+        "choices": [
+            {
+                "index": 0,
+                "message": message,
+                "finish_reason": finish_reason,
+            }
+        ],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        },
+    }
+
+
 def generate_completion(body: Mapping[str, Any]) -> dict[str, Any]:
     """Deterministic OpenAI-compatible chat completion for a request body."""
     messages = _messages(body)
+    if _is_diffguardian(messages):
+        return _diffguardian_completion(body, messages)
     user_text = _last_user_text(messages)
     system_text = _system_text(messages)
     content = _completion_text(user_text, system_text)
@@ -300,6 +419,7 @@ def create_app() -> FastAPI:
                 {"error": {"message": "messages is required"}}, status_code=400
             )
         _stats.record(body)
+        await _delay()
         if body.get("stream"):
             return StreamingResponse(
                 _stream(generate_stream_chunks(body)), media_type="text/event-stream"
@@ -317,6 +437,7 @@ def create_app() -> FastAPI:
                 {"error": {"message": "messages is required"}}, status_code=400
             )
         _stats.record(body)
+        await _delay()
         if body.get("stream"):
             return StreamingResponse(
                 _stream(generate_anthropic_stream_chunks(body)),

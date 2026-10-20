@@ -293,21 +293,25 @@ class Recorder:
         step_index: int | None = None,
         score: float | None = None,
         judge_model: str | None = None,
+        compared_run_id: str | None = None,
+        position_consistent: bool | None = None,
     ) -> str:
         verdict_id = _new_id()
         with self._lock:
             self._conn.execute(
                 "INSERT INTO verdicts (verdict_id, run_id, compared_run_id, step_index, tier, "
                 "metric_name, passed, score, position_consistent, reasoning_json, judge_model, "
-                "created_at) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+                "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     verdict_id,
                     run_id,
+                    compared_run_id,
                     step_index,
                     tier,
                     metric_name,
                     1 if passed else 0,
                     score,
+                    None if position_consistent is None else (1 if position_consistent else 0),
                     canonical_json(dict(reasoning)).decode("utf-8"),
                     judge_model,
                     time.time(),
@@ -785,10 +789,12 @@ class Recorder:
                     latency_ms,
                 ),
             )
+            # Replayed and semantic steps did not consume upstream tokens.
+            tokens = _total_tokens(output_obj) if source in ("RECORDED", "LIVE") else 0
             self._conn.execute(
                 "UPDATE runs SET total_tokens = total_tokens + ?, "
                 "total_latency_ms = total_latency_ms + ? WHERE run_id = ?",
-                (_total_tokens(output_obj), latency_ms, run_id),
+                (tokens, latency_ms, run_id),
             )
             self._conn.commit()
             self._next_index[run_id] = max(

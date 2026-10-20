@@ -95,12 +95,41 @@ function VerdictRow({ verdict }: { verdict: Verdict }) {
               TIER 2
             </span>
           ) : null}
+          {verdict.tier === "TIER3" ? (
+            <span className="rounded border border-accent/35 bg-accent-soft/40 px-1 py-0.5 font-mono text-[8px] text-accent-dim">
+              TIER 3
+            </span>
+          ) : null}
+          {verdict.position_consistent === false ? (
+            <span
+              className="rounded border border-bad/50 bg-bad/10 px-1 py-0.5 font-mono text-[8px] text-bad"
+              title="The judge picked a different winner when the runs were swapped."
+            >
+              ORDER BIAS
+            </span>
+          ) : null}
+          {verdict.position_consistent === true ? (
+            <span
+              className="rounded border border-good/30 bg-good/10 px-1 py-0.5 font-mono text-[8px] text-good"
+              title="The judge selected the same run in both presentation orders."
+            >
+              SWAP OK
+            </span>
+          ) : null}
           {typeof verdict.score === "number" ? (
             <span className="font-mono text-[9px] text-ink-500">
               {verdict.score.toFixed(2)}
             </span>
           ) : null}
         </div>
+        {verdict.compared_run_id ? (
+          <a
+            href={hashHref(runPath(verdict.compared_run_id))}
+            className="mt-0.5 inline-block font-mono text-[9px] text-ink-500 transition hover:text-accent"
+          >
+            vs {shortId(verdict.compared_run_id)}
+          </a>
+        ) : null}
         <div className="mt-0.5 line-clamp-2 text-[10px] leading-4 text-ink-500">
           {typeof verdict.reasoning === "string"
             ? verdict.reasoning

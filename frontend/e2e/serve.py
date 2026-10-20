@@ -213,6 +213,24 @@ def seed(db_path: Path) -> tuple[str, str]:
             {"detail": "stub was not called" if passed else "stub was called"},
             tier="TIER1",
         )
+        recorder.record_verdict(
+            child_id,
+            "pairwise:quality",
+            passed,
+            {
+                "winner": "a" if passed else "b",
+                "position_consistent": passed,
+                "orders": [
+                    {"order": "a_vs_b", "mapped_winner": "a" if passed else "b"},
+                    {"order": "b_vs_a", "mapped_winner": "a" if passed else None},
+                ],
+            },
+            tier="TIER3",
+            score=1.0 if passed else None,
+            judge_model="fake-judge",
+            compared_run_id=parent_id,
+            position_consistent=passed,
+        )
 
     conn.close()
     return parent_id, experiment_id

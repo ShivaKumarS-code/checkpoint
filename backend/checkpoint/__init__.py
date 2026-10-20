@@ -14,6 +14,6 @@ from checkpoint.sdk.checkpoint import checkpoint
 from checkpoint.sdk.client import DivergenceError, init
 from checkpoint.sdk.decorators import step, tool
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"
 
 __all__ = ["DivergenceError", "__version__", "checkpoint", "init", "step", "tool"]

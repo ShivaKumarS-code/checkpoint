@@ -65,6 +65,8 @@ export interface Verdict {
   passed: boolean;
   score?: number | null;
   judge_model?: string | null;
+  compared_run_id?: string | null;
+  position_consistent?: boolean | null;
   reasoning: unknown;
 }
 

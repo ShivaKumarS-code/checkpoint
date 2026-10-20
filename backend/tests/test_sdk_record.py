@@ -148,6 +148,30 @@ def test_step_labels_llm_calls_through_the_proxy(
     assert step["name"] == "plan"
 
 
+def test_groq_style_path_is_tagged_by_the_sdk(
+    daemon: DaemonHandle, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bind(monkeypatch, daemon)
+    checkpoint.init(run_name="sdk-test")
+
+    @checkpoint.step(name="review")
+    def call_groq() -> httpx.Response:
+        return httpx.post(
+            f"{daemon.url}/openai/v1/chat/completions",
+            json={"model": "demo-model", "messages": [{"role": "user", "content": "hi"}]},
+            timeout=10.0,
+        )
+
+    response = call_groq()
+    assert response.status_code == 200
+    step = fetch_steps(daemon.db_path)[0]
+    assert (step["step_type"], step["name"], step["source"]) == (
+        "LLM_CALL",
+        "review",
+        "RECORDED",
+    )
+
+
 def test_everything_is_a_no_op_without_a_daemon(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CHECKPOINT_DAEMON_URL", raising=False)
     sdk_client.reset()

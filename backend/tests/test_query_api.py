@@ -171,3 +171,40 @@ async def test_experiments_list_and_unknown_detail(
     assert experiments[0]["fork_step_index"] == 1
     assert experiments[0]["run_count"] == 0
     assert (await client.get("/api/experiments/nope")).status_code == 404
+
+
+async def test_experiment_detail_exposes_tier3_verdict_fields(
+    client: httpx.AsyncClient, seeded_app: Any
+) -> None:
+    app, parent_id, _, experiment_id, _ = seeded_app
+    child = app.state.recorder.create_run(
+        "child-tier3",
+        "FORK",
+        parent_run_id=parent_id,
+        forked_at_step=1,
+        variant_name="v2",
+        experiment_id=experiment_id,
+    )
+    child_id = str(child["run_id"])
+    app.state.recorder.finish_run(child_id, "COMPLETED")
+    app.state.recorder.record_verdict(
+        child_id,
+        "pairwise:quality",
+        True,
+        {
+            "winner": "a",
+            "position_consistent": True,
+            "orders": [{"order": "a_vs_b"}, {"order": "b_vs_a"}],
+        },
+        tier="TIER3",
+        score=1.0,
+        judge_model="small-judge",
+        compared_run_id=parent_id,
+        position_consistent=True,
+    )
+    detail = (await client.get(f"/api/experiments/{experiment_id}")).json()
+    verdict = detail["runs"][0]["verdicts"][0]
+    assert verdict["tier"] == "TIER3"
+    assert verdict["compared_run_id"] == parent_id
+    assert verdict["position_consistent"] is True
+    assert verdict["reasoning"]["winner"] == "a"

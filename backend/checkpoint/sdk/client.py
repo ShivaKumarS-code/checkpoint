@@ -202,7 +202,10 @@ def _tag_request(request: httpx.Request) -> None:
     parsed = urlsplit(str(request.url))
     if parsed.netloc != urlsplit(state.daemon_url).netloc:
         return
-    if not parsed.path.startswith("/v1/"):
+    if not (
+        parsed.path.startswith("/v1/")
+        or parsed.path.startswith("/openai/v1/")
+    ):
         return
     if HEADER_RUN_ID not in request.headers:
         request.headers[HEADER_RUN_ID] = state.run_id

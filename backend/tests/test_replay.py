@@ -83,6 +83,19 @@ def test_replay_serves_the_recorded_llm_output(
     assert replayed.headers["x-checkpoint-rng-seed"] == str(parent_step["rng_seed"])
 
 
+def test_replayed_steps_count_zero_tokens(daemon: DaemonHandle) -> None:
+    parent = create_run(daemon.url)
+    post_chat(daemon.url, chat_body("token accounting"), run_id=parent, step_name="plan")
+    assert run_row(daemon.db_path, parent)["total_tokens"] > 0
+
+    child = child_of(daemon, parent)
+    response = post_chat(
+        daemon.url, chat_body("token accounting"), run_id=child, step_name="plan"
+    )
+    assert response.status_code == 200
+    assert run_row(daemon.db_path, child)["total_tokens"] == 0
+
+
 def test_replay_matches_by_name_and_occurrence_not_index(daemon: DaemonHandle) -> None:
     parent = create_run(daemon.url)
     post_chat(daemon.url, chat_body("plan this"), run_id=parent, step_name="plan")

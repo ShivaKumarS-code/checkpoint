@@ -1,0 +1,232 @@
+{
+  "agent": "DiffGuardian",
+  "fixture": "SQL injection in app/auth.py",
+  "provider": "deterministic fake OpenAI-compatible server",
+  "parent": {
+    "status": "COMPLETED",
+    "tokens": 736,
+    "latency_ms": 75.90569999956642,
+    "upstream_calls": 2,
+    "steps": 3,
+    "provider_calls": 2,
+    "wall_ms": 3124.42,
+    "stdout_tail": "{\n  \"inline_comments\": [],\n  \"posted_body\": \"DiffGuardian Agent Review:\\n\\nReview complete. The change is small and the request flow looks reasonable.\",\n  \"status\": \"success\",\n  \"summary\": \"Review complete. The change is small and the request flow looks reasonable.\"\n}\n"
+  },
+  "experiment": {
+    "experiment_id": "2f463db87cf343189427a6d1fa4f5baf",
+    "name": "diffguardian-security-review",
+    "parent_run_id": "a4217eed1a454a64860fc0caf841391c",
+    "fork_step_index": 1,
+    "max_parallel": 2,
+    "variants": [
+      {
+        "variant_name": "baseline",
+        "run_id": "9c14f8fe02ff48988493ad7479eb705e",
+        "exit_code": 0,
+        "status": "COMPLETED",
+        "divergence_step": null,
+        "passed": false,
+        "checks": [
+          {
+            "label": "no_errors",
+            "check_type": "no_errors",
+            "required": true,
+            "passed": true,
+            "reasoning": {
+              "status": "COMPLETED",
+              "divergence_step": null,
+              "errors": []
+            },
+            "tier": "TIER1",
+            "score": null,
+            "judge_model": null,
+            "compared_run_id": null,
+            "position_consistent": null
+          },
+          {
+            "label": "final_output_matches",
+            "check_type": "final_output_matches",
+            "required": true,
+            "passed": false,
+            "reasoning": {
+              "output": {
+                "inline_comments": [],
+                "posted_body": "DiffGuardian Agent Review:\n\nReview complete. The change is small and the request flow looks reasonable.",
+                "status": "success",
+                "summary": "Review complete. The change is small and the request flow looks reasonable."
+              },
+              "regex_matched": false
+            },
+            "tier": "TIER1",
+            "score": null,
+            "judge_model": null,
+            "compared_run_id": null,
+            "position_consistent": null
+          }
+        ],
+        "semantic_matches": 0,
+        "semantic_steps": [],
+        "stdout": "{\n  \"inline_comments\": [],\n  \"posted_body\": \"DiffGuardian Agent Review:\\n\\nReview complete. The change is small and the request flow looks reasonable.\",\n  \"status\": \"success\",\n  \"summary\": \"Review complete. The change is small and the request flow looks reasonable.\"\n}\n",
+        "stderr": ""
+      },
+      {
+        "variant_name": "security_review",
+        "run_id": "33d546b192634070b87836f8b0fec1fa",
+        "exit_code": 0,
+        "status": "COMPLETED",
+        "divergence_step": null,
+        "passed": true,
+        "checks": [
+          {
+            "label": "no_errors",
+            "check_type": "no_errors",
+            "required": true,
+            "passed": true,
+            "reasoning": {
+              "status": "COMPLETED",
+              "divergence_step": null,
+              "errors": []
+            },
+            "tier": "TIER1",
+            "score": null,
+            "judge_model": null,
+            "compared_run_id": null,
+            "position_consistent": null
+          },
+          {
+            "label": "final_output_matches",
+            "check_type": "final_output_matches",
+            "required": true,
+            "passed": true,
+            "reasoning": {
+              "output": {
+                "inline_comments": [
+                  {
+                    "body": "SQL injection: use a parameterized query instead of f-string SQL.",
+                    "line": 12,
+                    "path": "app/auth.py"
+                  }
+                ],
+                "posted_body": "DiffGuardian Agent Review:\n\nReview complete. The diff contains a SQL injection: a request parameter is interpolated directly into a SQL query. Use a parameterized query before merging.",
+                "status": "success",
+                "summary": "Review complete. The diff contains a SQL injection: a request parameter is interpolated directly into a SQL query. Use a parameterized query before merging."
+              },
+              "regex_matched": true
+            },
+            "tier": "TIER1",
+            "score": null,
+            "judge_model": null,
+            "compared_run_id": null,
+            "position_consistent": null
+          }
+        ],
+        "semantic_matches": 0,
+        "semantic_steps": [],
+        "stdout": "{\n  \"inline_comments\": [\n    {\n      \"body\": \"SQL injection: use a parameterized query instead of f-string SQL.\",\n      \"line\": 12,\n      \"path\": \"app/auth.py\"\n    }\n  ],\n  \"posted_body\": \"DiffGuardian Agent Review:\\n\\nReview complete. The diff contains a SQL injection: a request parameter is interpolated directly into a SQL query. Use a parameterized query before merging.\",\n  \"status\": \"success\",\n  \"summary\": \"Review complete. The diff contains a SQL injection: a request parameter is interpolated directly into a SQL query. Use a parameterized query before merging.\"\n}\n",
+        "stderr": ""
+      }
+    ],
+    "semantic_matches": 0,
+    "semantic_steps": [],
+    "semantic_summary": "0 steps served by semantic match"
+  },
+  "post_fork_provider_calls": 2,
+  "verdicts": {
+    "baseline": {
+      "passed": false,
+      "checks": [
+        {
+          "label": "no_errors",
+          "passed": true,
+          "reasoning": {
+            "status": "COMPLETED",
+            "divergence_step": null,
+            "errors": []
+          }
+        },
+        {
+          "label": "final_output_matches",
+          "passed": false,
+          "reasoning": {
+            "output": {
+              "inline_comments": [],
+              "posted_body": "DiffGuardian Agent Review:\n\nReview complete. The change is small and the request flow looks reasonable.",
+              "status": "success",
+              "summary": "Review complete. The change is small and the request flow looks reasonable."
+            },
+            "regex_matched": false
+          }
+        }
+      ]
+    },
+    "security_review": {
+      "passed": true,
+      "checks": [
+        {
+          "label": "no_errors",
+          "passed": true,
+          "reasoning": {
+            "status": "COMPLETED",
+            "divergence_step": null,
+            "errors": []
+          }
+        },
+        {
+          "label": "final_output_matches",
+          "passed": true,
+          "reasoning": {
+            "output": {
+              "inline_comments": [
+                {
+                  "body": "SQL injection: use a parameterized query instead of f-string SQL.",
+                  "line": 12,
+                  "path": "app/auth.py"
+                }
+              ],
+              "posted_body": "DiffGuardian Agent Review:\n\nReview complete. The diff contains a SQL injection: a request parameter is interpolated directly into a SQL query. Use a parameterized query before merging.",
+              "status": "success",
+              "summary": "Review complete. The diff contains a SQL injection: a request parameter is interpolated directly into a SQL query. Use a parameterized query before merging."
+            },
+            "regex_matched": true
+          }
+        }
+      ]
+    }
+  },
+  "step_sources": {
+    "baseline": [
+      {
+        "step_index": 0,
+        "name": "llm_call",
+        "source": "REPLAYED"
+      },
+      {
+        "step_index": 1,
+        "name": "llm_call",
+        "source": "LIVE"
+      },
+      {
+        "step_index": 2,
+        "name": "after_review",
+        "source": "LIVE"
+      }
+    ],
+    "security_review": [
+      {
+        "step_index": 0,
+        "name": "llm_call",
+        "source": "REPLAYED"
+      },
+      {
+        "step_index": 1,
+        "name": "llm_call",
+        "source": "LIVE"
+      },
+      {
+        "step_index": 2,
+        "name": "after_review",
+        "source": "LIVE"
+      }
+    ]
+  }
+}

@@ -167,6 +167,54 @@ def test_default_step_name_and_occurrence_counting(daemon: DaemonHandle) -> None
     ]
 
 
+def test_groq_style_chat_route_records_and_replays(daemon: DaemonHandle) -> None:
+    run_id = create_run(daemon.url)
+    body = chat_body("review this pull request")
+    headers = {
+        "x-checkpoint-run-id": run_id,
+        "x-checkpoint-step-name": "review",
+    }
+    recorded = httpx.post(
+        f"{daemon.url}/openai/v1/chat/completions",
+        json=body,
+        headers=headers,
+        timeout=30.0,
+    )
+    assert recorded.status_code == 200
+    assert recorded.json()["object"] == "chat.completion"
+    step = fetch_steps(daemon.db_path)[0]
+    assert (step["step_type"], step["name"], step["source"]) == (
+        "LLM_CALL",
+        "review",
+        "RECORDED",
+    )
+
+    replay_id = create_run(
+        daemon.url,
+        name="groq-replay",
+        mode="REPLAY",
+        parent_run_id=run_id,
+        run_seed=1,
+    )
+    replayed = httpx.post(
+        f"{daemon.url}/openai/v1/chat/completions",
+        json=body,
+        headers={
+            "x-checkpoint-run-id": replay_id,
+            "x-checkpoint-step-name": "review",
+        },
+        timeout=30.0,
+    )
+    assert replayed.status_code == 200
+    assert replayed.json() == recorded.json()
+    replay_steps = [
+        row for row in fetch_steps(daemon.db_path) if row["run_id"] == replay_id
+    ]
+    assert [(row["name"], row["source"]) for row in replay_steps] == [
+        ("review", "REPLAYED")
+    ]
+
+
 def test_missing_run_header_is_rejected(daemon: DaemonHandle) -> None:
     response = post_chat(daemon.url, chat_body())
     assert response.status_code == 400

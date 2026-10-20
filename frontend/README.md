@@ -27,7 +27,8 @@ npm run build
 ```
 
 The build is written to `../backend/checkpoint/ui_dist/` and is committed so
-`uvx checkpoint web` (or an installed wheel) serves the UI without Node.
+`uvx --from checkpoint-ai checkpoint web` (or an installed wheel) serves the UI
+without Node.
 
 ## End-to-end tests
 

@@ -1,0 +1,221 @@
+{
+  "generated_at": "2026-10-20T11:44:53Z",
+  "method": {
+    "provider": "deterministic fake OpenAI-compatible server",
+    "simulated_provider_delay_ms_per_call": 1000.0,
+    "measured_runs_per_mode": 5,
+    "agent_time": "wall time around agent execution, excluding interpreter startup",
+    "process_wall_time": "subprocess wall time, including interpreter startup",
+    "tokens": "run total_tokens; replayed and semantic steps count as zero",
+    "warmup": "one record + replay discarded before measurement"
+  },
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.3",
+    "checkpoint_python": "D:\\checkpoint\\backend\\.venv\\Scripts\\python.exe"
+  },
+  "targets": {
+    "diffguardian": {
+      "live": {
+        "runs": 5,
+        "agent_ms_median": 2595.72,
+        "agent_ms_min": 2454.58,
+        "agent_ms_max": 3200.98,
+        "wall_ms_median": 11870.1,
+        "wall_ms_min": 9103.5,
+        "wall_ms_max": 12310.48,
+        "tokens_median": 736,
+        "tokens_min": 736,
+        "tokens_max": 736,
+        "upstream_calls": 10,
+        "samples": [
+          {
+            "status": "COMPLETED",
+            "tokens": 736,
+            "latency_ms": 2061.653299999307,
+            "upstream_calls": 2,
+            "steps": 3,
+            "run_id": "7a7cabf1f1464cb694beedf697642bec",
+            "returncode": 0,
+            "wall_ms": 12310.478600000351,
+            "agent_ms": 3200.9789000003366,
+            "provider_calls": 2,
+            "stdout_tail": "{\n  \"inline_comments\": [],\n  \"posted_body\": \"DiffGuardian Agent Review:\\n\\nReview complete. The change is small and the request flow looks reasonable.\",\n  \"status\": \"success\",\n  \"summary\": \"Review complete. The change is small and the request flow looks reasonable.\"\n}\n",
+            "stderr_tail": ""
+          },
+          {
+            "status": "COMPLETED",
+            "tokens": 736,
+            "latency_ms": 2039.884300000267,
+            "upstream_calls": 2,
+            "steps": 3,
+            "run_id": "4f08335e88eb416d8ee04824d51463f3",
+            "returncode": 0,
+            "wall_ms": 11870.096900000135,
+            "agent_ms": 2454.584500001147,
+            "provider_calls": 2,
+            "stdout_tail": "{\n  \"inline_comments\": [],\n  \"posted_body\": \"DiffGuardian Agent Review:\\n\\nReview complete. The change is small and the request flow looks reasonable.\",\n  \"status\": \"success\",\n  \"summary\": \"Review complete. The change is small and the request flow looks reasonable.\"\n}\n",
+            "stderr_tail": ""
+          },
+          {
+            "status": "COMPLETED",
+            "tokens": 736,
+            "latency_ms": 2031.5116999991005,
+            "upstream_calls": 2,
+            "steps": 3,
+            "run_id": "e11269d1854f438386d1d6e02326fc8e",
+            "returncode": 0,
+            "wall_ms": 12125.859100000525,
+            "agent_ms": 2487.497899999653,
+            "provider_calls": 2,
+            "stdout_tail": "{\n  \"inline_comments\": [],\n  \"posted_body\": \"DiffGuardian Agent Review:\\n\\nReview complete. The change is small and the request flow looks reasonable.\",\n  \"status\": \"success\",\n  \"summary\": \"Review complete. The change is small and the request flow looks reasonable.\"\n}\n",
+            "stderr_tail": ""
+          },
+          {
+            "status": "COMPLETED",
+            "tokens": 736,
+            "latency_ms": 2075.8028000000195,
+            "upstream_calls": 2,
+            "steps": 3,
+            "run_id": "743fc9e42a2a491e863e163e3590dd99",
+            "returncode": 0,
+            "wall_ms": 11415.82500000004,
+            "agent_ms": 2595.7230999993044,
+            "provider_calls": 2,
+            "stdout_tail": "{\n  \"inline_comments\": [],\n  \"posted_body\": \"DiffGuardian Agent Review:\\n\\nReview complete. The change is small and the request flow looks reasonable.\",\n  \"status\": \"success\",\n  \"summary\": \"Review complete. The change is small and the request flow looks reasonable.\"\n}\n",
+            "stderr_tail": ""
+          },
+          {
+            "status": "COMPLETED",
+            "tokens": 736,
+            "latency_ms": 2087.751200000639,
+            "upstream_calls": 2,
+            "steps": 3,
+            "run_id": "6746e314f1e3462ebc9a62bb305fe092",
+            "returncode": 0,
+            "wall_ms": 9103.501800000231,
+            "agent_ms": 2657.568900000115,
+            "provider_calls": 2,
+            "stdout_tail": "{\n  \"inline_comments\": [],\n  \"posted_body\": \"DiffGuardian Agent Review:\\n\\nReview complete. The change is small and the request flow looks reasonable.\",\n  \"status\": \"success\",\n  \"summary\": \"Review complete. The change is small and the request flow looks reasonable.\"\n}\n",
+            "stderr_tail": ""
+          }
+        ]
+      },
+      "replay": {
+        "runs": 5,
+        "agent_ms_median": 398.93,
+        "agent_ms_min": 181.11,
+        "agent_ms_max": 602.43,
+        "wall_ms_median": 7333.01,
+        "wall_ms_min": 3312.71,
+        "wall_ms_max": 13797.71,
+        "tokens_median": 0,
+        "tokens_min": 0,
+        "tokens_max": 0,
+        "upstream_calls": 0,
+        "samples": [
+          {
+            "status": "COMPLETED",
+            "tokens": 0,
+            "latency_ms": 0.0,
+            "upstream_calls": 0,
+            "steps": 3,
+            "run_id": "2604521bd32c43d8bcd72e0536abc2a6",
+            "returncode": 0,
+            "wall_ms": 3312.712400000237,
+            "agent_ms": 181.10760000126902,
+            "provider_calls": 0,
+            "stdout_tail": "{\n  \"inline_comments\": [],\n  \"posted_body\": \"DiffGuardian Agent Review:\\n\\nReview complete. The change is small and the request flow looks reasonable.\",\n  \"status\": \"success\",\n  \"summary\": \"Review complete. The change is small and the request flow looks reasonable.\"\n}\n",
+            "stderr_tail": ""
+          },
+          {
+            "status": "COMPLETED",
+            "tokens": 0,
+            "latency_ms": 0.0,
+            "upstream_calls": 0,
+            "steps": 3,
+            "run_id": "14be9fdb53fa4e2ea5456155103da0b2",
+            "returncode": 0,
+            "wall_ms": 3697.5038000000495,
+            "agent_ms": 235.86280000017723,
+            "provider_calls": 0,
+            "stdout_tail": "{\n  \"inline_comments\": [],\n  \"posted_body\": \"DiffGuardian Agent Review:\\n\\nReview complete. The change is small and the request flow looks reasonable.\",\n  \"status\": \"success\",\n  \"summary\": \"Review complete. The change is small and the request flow looks reasonable.\"\n}\n",
+            "stderr_tail": ""
+          },
+          {
+            "status": "COMPLETED",
+            "tokens": 0,
+            "latency_ms": 0.0,
+            "upstream_calls": 0,
+            "steps": 3,
+            "run_id": "e69ae34b570b48b8a2dfef6b786967ef",
+            "returncode": 0,
+            "wall_ms": 13797.708300000522,
+            "agent_ms": 602.4273999992147,
+            "provider_calls": 0,
+            "stdout_tail": "{\n  \"inline_comments\": [],\n  \"posted_body\": \"DiffGuardian Agent Review:\\n\\nReview complete. The change is small and the request flow looks reasonable.\",\n  \"status\": \"success\",\n  \"summary\": \"Review complete. The change is small and the request flow looks reasonable.\"\n}\n",
+            "stderr_tail": ""
+          },
+          {
+            "status": "COMPLETED",
+            "tokens": 0,
+            "latency_ms": 0.0,
+            "upstream_calls": 0,
+            "steps": 3,
+            "run_id": "7dde14ef41c54e7fa3848be61eed79b8",
+            "returncode": 0,
+            "wall_ms": 7333.007799999905,
+            "agent_ms": 518.2279999989987,
+            "provider_calls": 0,
+            "stdout_tail": "{\n  \"inline_comments\": [],\n  \"posted_body\": \"DiffGuardian Agent Review:\\n\\nReview complete. The change is small and the request flow looks reasonable.\",\n  \"status\": \"success\",\n  \"summary\": \"Review complete. The change is small and the request flow looks reasonable.\"\n}\n",
+            "stderr_tail": ""
+          },
+          {
+            "status": "COMPLETED",
+            "tokens": 0,
+            "latency_ms": 0.0,
+            "upstream_calls": 0,
+            "steps": 3,
+            "run_id": "4aea47b12d3b4bbb8b445e32a3d36a66",
+            "returncode": 0,
+            "wall_ms": 7560.985800000708,
+            "agent_ms": 398.9344000001438,
+            "provider_calls": 0,
+            "stdout_tail": "{\n  \"inline_comments\": [],\n  \"posted_body\": \"DiffGuardian Agent Review:\\n\\nReview complete. The change is small and the request flow looks reasonable.\",\n  \"status\": \"success\",\n  \"summary\": \"Review complete. The change is small and the request flow looks reasonable.\"\n}\n",
+            "stderr_tail": ""
+          }
+        ]
+      },
+      "warmup": {
+        "live": {
+          "status": "COMPLETED",
+          "tokens": 736,
+          "latency_ms": 2106.7652000001544,
+          "upstream_calls": 2,
+          "steps": 3,
+          "run_id": "8b52935a21d646afaf5e24f493a5bbd2",
+          "returncode": 0,
+          "wall_ms": 10323.987300000226,
+          "agent_ms": 2549.8474999985774,
+          "provider_calls": 2,
+          "stdout_tail": "{\n  \"inline_comments\": [],\n  \"posted_body\": \"DiffGuardian Agent Review:\\n\\nReview complete. The change is small and the request flow looks reasonable.\",\n  \"status\": \"success\",\n  \"summary\": \"Review complete. The change is small and the request flow looks reasonable.\"\n}\n",
+          "stderr_tail": ""
+        },
+        "replay": {
+          "status": "COMPLETED",
+          "tokens": 0,
+          "latency_ms": 0.0,
+          "upstream_calls": 0,
+          "steps": 3,
+          "run_id": "9bf47b750f1843da9658a52d8f55c41a",
+          "returncode": 0,
+          "wall_ms": 6345.99899999921,
+          "agent_ms": 388.32650000040303,
+          "provider_calls": 0,
+          "stdout_tail": "{\n  \"inline_comments\": [],\n  \"posted_body\": \"DiffGuardian Agent Review:\\n\\nReview complete. The change is small and the request flow looks reasonable.\",\n  \"status\": \"success\",\n  \"summary\": \"Review complete. The change is small and the request flow looks reasonable.\"\n}\n",
+          "stderr_tail": ""
+        }
+      }
+    }
+  }
+}

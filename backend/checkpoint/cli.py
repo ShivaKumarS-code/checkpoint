@@ -324,7 +324,7 @@ def fork(
         None, "--max-parallel", help="override the YAML concurrency limit"
     ),
 ) -> None:
-    """Fork a recorded run across variants and report Tier 1/Tier 2 checks."""
+    """Fork a recorded run across variants and report Tier 1/Tier 2/Tier 3 checks."""
     exit_code = _run_variants(
         run_id, variants, db, upstream, port, max_parallel, require_pass=False
     )

@@ -3,10 +3,21 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "checkpoint"
-version = "0.0.1"
+name = "checkpoint-ai"
+version = "0.1.0"
 description = "Deterministic replay and fork debugger for AI agents"
+readme = "README.md"
 requires-python = ">=3.11"
+keywords = ["agents", "debugging", "llm", "replay", "testing"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Debuggers",
+]
 dependencies = [
     "fastapi>=0.115",
     "httpx>=0.27",
@@ -23,6 +34,11 @@ dependencies = [
 
 [project.scripts]
 checkpoint = "checkpoint.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/ShivaKumarS-code/checkpoint"
+Repository = "https://github.com/ShivaKumarS-code/checkpoint"
+Issues = "https://github.com/ShivaKumarS-code/checkpoint/issues"
 
 [dependency-groups]
 dev = [

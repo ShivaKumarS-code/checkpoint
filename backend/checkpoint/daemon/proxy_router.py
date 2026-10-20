@@ -153,6 +153,12 @@ async def chat_completions(request: Request) -> Response:
     return await _handle_llm(request, OPENAI_ENDPOINT)
 
 
+@router.post("/openai/v1/chat/completions")
+async def groq_chat_completions(request: Request) -> Response:
+    """Groq's SDK prefixes its OpenAI-compatible route with ``/openai``."""
+    return await _handle_llm(request, OPENAI_ENDPOINT)
+
+
 @router.post("/v1/messages")
 async def messages(request: Request) -> Response:
     return await _handle_llm(request, ANTHROPIC_ENDPOINT)
