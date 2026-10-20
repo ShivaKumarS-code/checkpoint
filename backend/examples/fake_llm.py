@@ -20,12 +20,12 @@ import os
 import re
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 _ORDER_RE = re.compile(r"ORD-\d+")
 _FALLBACK_TEXT = "This is a deterministic fake completion."
@@ -88,6 +88,10 @@ def _system_text(messages: Sequence[Mapping[str, Any]]) -> str:
 
 
 def _completion_text(user_text: str, system_text: str) -> str:
+    if "validating a semantic replay match" in user_text:
+        return json.dumps({"equivalent": True, "reason": "fake semantic judge"})
+    if "You are grading an AI agent run against a rubric" in user_text:
+        return json.dumps({"passed": True, "score": 1.0, "reason": "fake rubric pass"})
     try:
         payload: Any = json.loads(user_text)
     except ValueError:
@@ -164,11 +168,129 @@ def generate_completion(body: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def generate_stream_chunks(body: Mapping[str, Any]) -> list[bytes]:
+    """Deterministic OpenAI-style SSE chunks with stable boundaries."""
+    completion = generate_completion(body)
+    content = str(completion["choices"][0]["message"]["content"])
+    digest = _request_digest(body)
+    model = str(body.get("model", "fake-llm"))
+    pieces = [content[: len(content) // 2], content[len(content) // 2 :]]
+    events: list[dict[str, Any]] = [
+        {
+            "id": f"chatcmpl-{digest}",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"role": "assistant", "content": ""},
+                    "finish_reason": None,
+                }
+            ],
+        }
+    ]
+    for piece in pieces:
+        events.append(
+            {
+                "id": f"chatcmpl-{digest}",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": piece},
+                        "finish_reason": None,
+                    }
+                ],
+            }
+        )
+    events.append(
+        {
+            "id": f"chatcmpl-{digest}",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": model,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            "usage": completion["usage"],
+        }
+    )
+    chunks = [f"data: {json.dumps(event, sort_keys=True)}\n\n".encode() for event in events]
+    chunks.append(b"data: [DONE]\n\n")
+    return chunks
+
+
+def generate_anthropic_message(body: Mapping[str, Any]) -> dict[str, Any]:
+    """Deterministic Anthropic Messages response for the same demo prompts."""
+    messages = _messages(body)
+    content = _completion_text(_last_user_text(messages), _system_text(messages))
+    prompt_tokens = max(1, len(_last_user_text(messages)) // 4)
+    completion_tokens = max(1, len(content) // 4)
+    return {
+        "id": f"msg_fake_{_request_digest(body)}",
+        "type": "message",
+        "role": "assistant",
+        "model": str(body.get("model", "claude-fake")),
+        "content": [{"type": "text", "text": content}],
+        "stop_reason": "end_turn",
+        "stop_sequence": None,
+        "usage": {
+            "input_tokens": prompt_tokens,
+            "output_tokens": completion_tokens,
+        },
+    }
+
+
+def generate_anthropic_stream_chunks(body: Mapping[str, Any]) -> list[bytes]:
+    """Deterministic Anthropic-style SSE events with stable boundaries."""
+    message = generate_anthropic_message(body)
+    content = str(message["content"][0]["text"])
+    pieces = [content[: len(content) // 2], content[len(content) // 2 :]]
+    start = {
+        "type": "message_start",
+        "message": {**message, "content": [], "stop_reason": None},
+    }
+    block_start = {
+        "type": "content_block_start",
+        "index": 0,
+        "content_block": {"type": "text", "text": ""},
+    }
+    block_deltas = [
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": piece},
+        }
+        for piece in pieces
+    ]
+    block_stop = {"type": "content_block_stop", "index": 0}
+    message_delta = {
+        "type": "message_delta",
+        "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+        "usage": {"output_tokens": message["usage"]["output_tokens"]},
+    }
+    message_stop = {"type": "message_stop"}
+
+    chunks: list[bytes] = []
+    for event in [start, block_start, *block_deltas, block_stop, message_delta, message_stop]:
+        event_name = str(event["type"])
+        chunks.append(
+            f"event: {event_name}\ndata: {json.dumps(event, sort_keys=True)}\n\n".encode()
+        )
+    return chunks
+
+
+async def _stream(chunks: list[bytes]) -> AsyncIterator[bytes]:
+    for chunk in chunks:
+        yield chunk
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="checkpoint fake LLM", docs_url=None, redoc_url=None)
 
     @app.post("/v1/chat/completions")
-    async def chat_completions(request: Request) -> JSONResponse:
+    async def chat_completions(request: Request) -> Any:
         try:
             body = await request.json()
         except ValueError:
@@ -178,7 +300,29 @@ def create_app() -> FastAPI:
                 {"error": {"message": "messages is required"}}, status_code=400
             )
         _stats.record(body)
+        if body.get("stream"):
+            return StreamingResponse(
+                _stream(generate_stream_chunks(body)), media_type="text/event-stream"
+            )
         return JSONResponse(generate_completion(body))
+
+    @app.post("/v1/messages")
+    async def messages(request: Request) -> Any:
+        try:
+            body = await request.json()
+        except ValueError:
+            return JSONResponse({"error": {"message": "invalid JSON body"}}, status_code=400)
+        if not isinstance(body, Mapping) or not isinstance(body.get("messages"), list):
+            return JSONResponse(
+                {"error": {"message": "messages is required"}}, status_code=400
+            )
+        _stats.record(body)
+        if body.get("stream"):
+            return StreamingResponse(
+                _stream(generate_anthropic_stream_chunks(body)),
+                media_type="text/event-stream",
+            )
+        return JSONResponse(generate_anthropic_message(body))
 
     @app.get("/__control/stats")
     async def stats() -> JSONResponse:

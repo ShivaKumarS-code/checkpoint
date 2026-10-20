@@ -5,13 +5,19 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 MIGRATIONS: list[tuple[int, str]] = [
     (
         2,
         "ALTER TABLE runs ADD COLUMN divergence_step INTEGER;"
         "ALTER TABLE runs ADD COLUMN divergence_diff_hash TEXT REFERENCES blobs(blob_hash);",
+    ),
+    (
+        3,
+        "CREATE TABLE IF NOT EXISTS judge_cache ("
+        "cache_key TEXT PRIMARY KEY, model TEXT NOT NULL, prompt_hash TEXT NOT NULL, "
+        "response_json TEXT NOT NULL, created_at REAL NOT NULL);",
     ),
 ]
 

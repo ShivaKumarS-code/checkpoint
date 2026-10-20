@@ -30,11 +30,12 @@ CheckType = Literal[
     "state_equals",
     "step_count_lte",
     "python",
+    "rubric",
 ]
 
 
 class CheckSpec(msgspec.Struct, forbid_unknown_fields=True, frozen=True):
-    """One Tier 1 check from variants.yaml."""
+    """One check from variants.yaml (Tier 1 deterministic or Tier 2 rubric)."""
 
     type: CheckType
     required: bool = True
@@ -46,6 +47,8 @@ class CheckSpec(msgspec.Struct, forbid_unknown_fields=True, frozen=True):
     path: str | None = None
     value: Any = None
     max_steps: int | None = None
+    rubric: str | None = None
+    model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,9 @@ class CheckResult:
     passed: bool
     required: bool
     reasoning: dict[str, Any]
+    tier: str = "TIER1"
+    score: float | None = None
+    judge_model: str | None = None
 
 
 def validate_checks(checks: Sequence[CheckSpec]) -> None:
@@ -82,6 +88,8 @@ def validate_checks(checks: Sequence[CheckSpec]) -> None:
         if check.type == "python":
             if not check.path or "::" not in check.path:
                 raise ValueError("python checks require path: file.py::function")
+        if check.type == "rubric" and not (check.rubric or "").strip():
+            raise ValueError("rubric checks require a non-empty rubric")
 
 
 def check_label(check: CheckSpec) -> str:
@@ -89,6 +97,8 @@ def check_label(check: CheckSpec) -> str:
         return f"{check.type}:{check.name}"
     if check.type == "state_equals" and check.checkpoint and check.path:
         return f"state_equals:{check.checkpoint}:{check.path}"
+    if check.type == "rubric" and check.name:
+        return f"rubric:{check.name}"
     if check.type == "final_output_matches":
         return "final_output_matches"
     return check.type
@@ -100,9 +110,29 @@ def run_checks(
     run_id: str,
     checks: Sequence[CheckSpec],
     base_dir: str | Path | None = None,
+    *,
+    judge: Any = None,
+    judge_model: str = "gpt-4o-mini",
 ) -> list[CheckResult]:
+    """Run deterministic checks and Tier 2 rubric checks in order."""
+    from checkpoint.evaluators.rubric import evaluate_rubric
+
     view = load_run_view(conn, blob_store, run_id)
-    return [evaluate(check, view, base_dir) for check in checks]
+    results: list[CheckResult] = []
+    for check in checks:
+        if check.type == "rubric":
+            results.append(
+                evaluate_rubric(
+                    conn,
+                    view,
+                    check,
+                    judge,
+                    default_model=judge_model,
+                )
+            )
+        else:
+            results.append(evaluate(check, view, base_dir))
+    return results
 
 
 def load_run_view(

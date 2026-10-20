@@ -80,3 +80,11 @@ CREATE TABLE IF NOT EXISTS verdicts (
   judge_model  TEXT,
   created_at   REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS judge_cache (
+  cache_key    TEXT PRIMARY KEY,
+  model        TEXT NOT NULL,
+  prompt_hash  TEXT NOT NULL,
+  response_json TEXT NOT NULL,
+  created_at   REAL NOT NULL
+);

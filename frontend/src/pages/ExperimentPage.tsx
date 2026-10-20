@@ -19,7 +19,7 @@ import {
   type RunSummary,
   type Verdict,
 } from "../api";
-import { LiveDot, StatusBadge } from "../components/Badges";
+import { Badge, LiveDot, StatusBadge } from "../components/Badges";
 import { EmptyState, ErrorBox, Loading, PageHeader, Panel } from "../components/Panel";
 import { useEvents } from "../events";
 import { checkLabel, formatTimestamp, shortId } from "../format";
@@ -88,7 +88,19 @@ function VerdictRow({ verdict }: { verdict: Verdict }) {
     <div className="flex items-start gap-2 border-t border-ink-800/70 py-1.5 first:border-0">
       <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${verdict.passed ? "bg-good" : "bg-bad"}`} />
       <div className="min-w-0">
-        <div className="font-mono text-[11px] text-ink-200">{verdict.metric_name}</div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="font-mono text-[11px] text-ink-200">{verdict.metric_name}</span>
+          {verdict.tier === "TIER2" ? (
+            <span className="rounded border border-violet/30 bg-violet/10 px-1 py-0.5 font-mono text-[8px] text-violet">
+              TIER 2
+            </span>
+          ) : null}
+          {typeof verdict.score === "number" ? (
+            <span className="font-mono text-[9px] text-ink-500">
+              {verdict.score.toFixed(2)}
+            </span>
+          ) : null}
+        </div>
         <div className="mt-0.5 line-clamp-2 text-[10px] leading-4 text-ink-500">
           {typeof verdict.reasoning === "string"
             ? verdict.reasoning
@@ -267,6 +279,19 @@ export function ExperimentPage({ experimentId }: { experimentId: string }) {
             <span className="text-[11px] text-ink-500">
               {detail.runs.length} variants · {formatTimestamp(detail.experiment.created_at)}
             </span>
+            {detail.semantic_matches ? (
+              <span
+                data-testid="semantic-summary"
+                title={detail.semantic_steps
+                  ?.map((step) => `${step.variant_name}: ${step.name}`)
+                  .join(", ")}
+              >
+                <Badge tone="green">
+                  {detail.semantic_summary ??
+                    `${detail.semantic_matches} steps served by semantic match`}
+                </Badge>
+              </span>
+            ) : null}
           </div>
         }
         actions={
@@ -368,6 +393,14 @@ export function ExperimentPage({ experimentId }: { experimentId: string }) {
                 </div>
 
                 <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-ink-800 pt-3">
+                  {run?.semantic_matches ? (
+                    <Badge
+                      tone="green"
+                      className="normal-case tracking-normal"
+                    >
+                      {run.semantic_matches} semantic
+                    </Badge>
+                  ) : null}
                   {run ? (
                     <>
                       <a

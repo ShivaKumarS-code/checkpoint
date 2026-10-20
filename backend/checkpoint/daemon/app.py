@@ -14,7 +14,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from checkpoint.config import Config, effective_masks, effective_redaction, load_config
+from checkpoint.config import (
+    Config,
+    effective_masks,
+    effective_redaction,
+    load_config,
+    validate_config,
+)
 from checkpoint.daemon import events, experiments, proxy_router, query_router, sdk_router
 from checkpoint.daemon.recorder import Recorder
 from checkpoint.storage.cas import BlobStore
@@ -33,6 +39,7 @@ def create_app(
 ) -> FastAPI:
     if config is None:
         config = load_config()
+    validate_config(config)
     ui_path = (Path(ui_dir) if ui_dir is not None else DEFAULT_UI_DIR).resolve()
     index_html = ui_path / "index.html"
     has_ui = index_html.is_file()

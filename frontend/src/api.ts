@@ -54,6 +54,8 @@ export interface ExperimentSummary {
   fork_step_index: number;
   created_at: number;
   run_count?: number;
+  semantic_matches?: number;
+  semantic_summary?: string;
 }
 
 export interface Verdict {
@@ -61,12 +63,24 @@ export interface Verdict {
   metric_name: string;
   tier: string;
   passed: boolean;
+  score?: number | null;
+  judge_model?: string | null;
   reasoning: unknown;
+}
+
+export interface SemanticStep {
+  variant_name: string;
+  run_id: string;
+  step_index: number;
+  name: string;
+  occurrence: number;
 }
 
 export interface ExperimentRun {
   run: RunSummary;
   verdicts: Verdict[];
+  semantic_matches?: number;
+  semantic_steps?: SemanticStep[];
 }
 
 export interface ExperimentCheck {
@@ -80,6 +94,9 @@ export interface ExperimentDetail {
   variants: Array<{ name: string; [key: string]: unknown }>;
   checks: ExperimentCheck[];
   runs: ExperimentRun[];
+  semantic_matches?: number;
+  semantic_steps?: SemanticStep[];
+  semantic_summary?: string;
 }
 
 export class ApiError extends Error {

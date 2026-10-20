@@ -29,6 +29,7 @@ from checkpoint.matching.replay import (
     normalized_diff,
     step_label,
 )
+from checkpoint.matching.semantic import find_semantic_candidate
 from checkpoint.sdk.determinism import boundary_seed, real_now_iso
 from checkpoint.storage.cas import BlobStore
 
@@ -55,6 +56,16 @@ _INSERT_STEP_SQL = (
 @dataclass(frozen=True)
 class StepInfo:
     """Metadata of a recorded step that the SDK needs to settle its clock."""
+
+    step_index: int
+    occurrence: int
+    frozen_timestamp: str
+    rng_seed: int
+
+
+@dataclass(frozen=True)
+class StepReservation:
+    """A step index reserved before a streaming response starts."""
 
     step_index: int
     occurrence: int
@@ -280,13 +291,15 @@ class Recorder:
         reasoning: Mapping[str, Any],
         tier: str = "TIER1",
         step_index: int | None = None,
+        score: float | None = None,
+        judge_model: str | None = None,
     ) -> str:
         verdict_id = _new_id()
         with self._lock:
             self._conn.execute(
                 "INSERT INTO verdicts (verdict_id, run_id, compared_run_id, step_index, tier, "
                 "metric_name, passed, score, position_consistent, reasoning_json, judge_model, "
-                "created_at) VALUES (?, ?, NULL, ?, ?, ?, ?, NULL, NULL, ?, NULL, ?)",
+                "created_at) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
                 (
                     verdict_id,
                     run_id,
@@ -294,7 +307,9 @@ class Recorder:
                     tier,
                     metric_name,
                     1 if passed else 0,
+                    score,
                     canonical_json(dict(reasoning)).decode("utf-8"),
+                    judge_model,
                     time.time(),
                 ),
             )
@@ -350,7 +365,10 @@ class Recorder:
     def list_experiments(self, limit: int = 100) -> list[sqlite3.Row]:
         return self._conn.execute(
             "SELECT e.*, (SELECT COUNT(*) FROM runs r WHERE r.experiment_id = "
-            "e.experiment_id) AS run_count FROM experiments e "
+            "e.experiment_id) AS run_count, (SELECT COUNT(*) FROM steps s "
+            "JOIN runs r ON s.run_id = r.run_id WHERE r.experiment_id = "
+            "e.experiment_id AND s.source = 'SEMANTIC') AS semantic_matches "
+            "FROM experiments e "
             "ORDER BY e.created_at DESC, e.experiment_id DESC LIMIT ?",
             (limit,),
         ).fetchall()
@@ -378,6 +396,77 @@ class Recorder:
             error=error,
             frozen_timestamp=frozen_timestamp,
             source=source,
+        )
+
+    def reserve_stream_step(
+        self,
+        run_id: str,
+        name: str,
+        frozen_timestamp: str | None = None,
+    ) -> StepReservation:
+        """Reserve the next index and entropy before streaming response headers.
+
+        The SDK settles its clock from response headers as soon as they arrive,
+        before any body chunks. Reserving up front means the eventual step keeps
+        the same index/seed that the SDK already used.
+        """
+        with self._lock:
+            run = self.get_run(run_id)
+            if run is None:
+                raise KeyError(f"unknown run: {run_id}")
+            step_index = self._next_index.get(run_id)
+            if step_index is None:
+                row = self._conn.execute(
+                    "SELECT COALESCE(MAX(step_index) + 1, 0) AS next FROM steps "
+                    "WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()
+                step_index = int(row["next"])
+            occurrence = int(
+                self._conn.execute(
+                    "SELECT COUNT(*) AS n FROM steps WHERE run_id = ? AND name = ?",
+                    (run_id, name),
+                ).fetchone()["n"]
+            )
+            timestamp = frozen_timestamp or real_now_iso()
+            seed = boundary_seed(int(run["run_seed"]), step_index)
+            self._next_index[run_id] = step_index + 1
+            return StepReservation(
+                step_index=step_index,
+                occurrence=occurrence,
+                frozen_timestamp=timestamp,
+                rng_seed=seed,
+            )
+
+    def record_reserved_llm_step(
+        self,
+        run_id: str,
+        name: str,
+        request_body: Any,
+        response_body: Any,
+        latency_ms: float,
+        reservation: StepReservation,
+        error: str | None = None,
+        source: str = "RECORDED",
+    ) -> StepInfo:
+        """Persist a streamed LLM step at the index reserved before streaming."""
+        mk = match_key(request_body, self._masks)
+        return self._record_step_locked(
+            run_id=run_id,
+            step_type="LLM_CALL",
+            name=name,
+            match_key_value=mk,
+            input_obj=request_body,
+            output_obj=response_body,
+            post_state_obj=None,
+            tool_mode=None,
+            error=error,
+            latency_ms=latency_ms,
+            source=source,
+            frozen_timestamp=reservation.frozen_timestamp,
+            rng_seed=reservation.rng_seed,
+            step_index=reservation.step_index,
+            occurrence=reservation.occurrence,
         )
 
     def record_tool_step(
@@ -438,6 +527,7 @@ class Recorder:
         lookup: LookupResult,
         tool_mode: str | None = None,
         reuse_parent_index: bool = True,
+        source: str = "REPLAYED",
     ) -> StepInfo:
         """Persist a cassette-served step with the parent's time and entropy.
 
@@ -466,7 +556,7 @@ class Recorder:
             tool_mode=tool_mode,
             error=lookup.error,
             latency_ms=0.0,
-            source="REPLAYED",
+            source=source,
             frozen_timestamp=lookup.frozen_timestamp,
             rng_seed=lookup.rng_seed,
             step_index=lookup.step_index if reuse_parent_index else None,
@@ -476,6 +566,61 @@ class Recorder:
     def lookup_llm(self, run_id: str, name: str, request_body: Any) -> LookupResult:
         mk = match_key(request_body, self._masks)
         return self._lookup(run_id, "LLM_CALL", name, mk, request_body)
+
+    def lookup_semantic(
+        self,
+        run_id: str,
+        name: str,
+        request_body: Any,
+        *,
+        threshold: float,
+        step_names: list[str],
+        max_step_index: int | None = None,
+    ) -> LookupResult | None:
+        """Find an opt-in semantic match in the parent run, if one exists."""
+        if name not in step_names:
+            return None
+        with self._lock:
+            run = self.get_run(run_id)
+            if run is None:
+                raise KeyError(f"unknown run: {run_id}")
+            parent_run_id = run["parent_run_id"]
+            if parent_run_id is None:
+                return None
+            occurrence = int(
+                self._conn.execute(
+                    "SELECT COUNT(*) AS n FROM steps WHERE run_id = ? AND name = ?",
+                    (run_id, name),
+                ).fetchone()["n"]
+            )
+            candidate = find_semantic_candidate(
+                self._conn,
+                self._blobs,
+                str(parent_run_id),
+                name,
+                request_body,
+                self._masks,
+                threshold,
+                max_step_index=max_step_index,
+            )
+            if candidate is None:
+                return None
+            diff = normalized_diff(
+                candidate.recorded_input,
+                request_body,
+                self._masks,
+                step_label("LLM_CALL", name, occurrence),
+            )
+            return LookupResult(
+                found=True,
+                matched=False,
+                occurrence=occurrence,
+                step=candidate.step,
+                diff=diff,
+                semantic=True,
+                similarity=candidate.similarity,
+                recorded_input=candidate.recorded_input,
+            )
 
     def lookup_tool(self, run_id: str, name: str, input_obj: Any) -> LookupResult:
         mk = match_key({"tool": name, "input": input_obj}, self._masks)
@@ -646,7 +791,9 @@ class Recorder:
                 (_total_tokens(output_obj), latency_ms, run_id),
             )
             self._conn.commit()
-            self._next_index[run_id] = step_index + 1
+            self._next_index[run_id] = max(
+                self._next_index.get(run_id, 0), step_index + 1
+            )
             self._emit(
                 {
                     "type": "step_added",

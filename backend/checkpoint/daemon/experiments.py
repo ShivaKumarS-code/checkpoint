@@ -16,12 +16,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx
 import msgspec
 import yaml
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
+from checkpoint.config import Config
 from checkpoint.daemon.recorder import Recorder
 from checkpoint.evaluators.deterministic import (
     CheckResult,
@@ -29,6 +31,7 @@ from checkpoint.evaluators.deterministic import (
     run_checks,
     validate_checks,
 )
+from checkpoint.evaluators.rubric import Judge
 from checkpoint.storage.cas import BlobStore
 from checkpoint.storage.db import init_db
 
@@ -189,11 +192,52 @@ def _variant_env(
             "CHECKPOINT_FORK_AT": str(fork_step),
             "CHECKPOINT_VARIANT": variant.name,
             "OPENAI_BASE_URL": f"{daemon_url.rstrip('/')}/v1",
+            "ANTHROPIC_BASE_URL": f"{daemon_url.rstrip('/')}/v1",
             "PYTHONUNBUFFERED": "1",
         }
     )
     env.update(variant.env)
     return env
+
+
+def _upstream_judge(
+    upstream_url: str, *, temperature: float, max_tokens: int
+) -> Judge:
+    """Create a Tier 2 judge backed by the OpenAI-compatible upstream."""
+    api_key = os.environ.get("CHECKPOINT_JUDGE_API_KEY") or os.environ.get(
+        "OPENAI_API_KEY"
+    )
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+    def judge(prompt: str, model: str) -> str:
+        response = httpx.post(
+            f"{upstream_url.rstrip('/')}/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a strict rubric grader. Reply with JSON only.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+            },
+            timeout=120.0,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        choices = payload.get("choices") if isinstance(payload, Mapping) else None
+        first = choices[0] if isinstance(choices, list) and choices else None
+        message = first.get("message") if isinstance(first, Mapping) else None
+        content = message.get("content") if isinstance(message, Mapping) else None
+        if not isinstance(content, str):
+            raise ValueError("judge upstream returned no text content")
+        return content
+
+    return judge
 
 
 def run_experiment(
@@ -204,6 +248,9 @@ def run_experiment(
     base_dir: str | Path | None = None,
     max_parallel: int | None = None,
     on_event: Callable[[dict[str, Any]], None] | None = None,
+    config: Config | None = None,
+    upstream_url: str | None = None,
+    judge: Judge | None = None,
 ) -> dict[str, Any]:
     """Run every variant and return the experiment plus per-variant verdicts.
 
@@ -212,6 +259,16 @@ def run_experiment(
     """
     base = Path(base_dir or Path.cwd()).resolve()
     validate_spec(spec, base)
+    tier2_model = config.tier2.model if config is not None else "gpt-4o-mini"
+    tier2_temperature = config.tier2.temperature if config is not None else 0.0
+    tier2_max_tokens = config.tier2.max_tokens if config is not None else 512
+    judge_fn = judge
+    if judge_fn is None and upstream_url:
+        judge_fn = _upstream_judge(
+            upstream_url,
+            temperature=tier2_temperature,
+            max_tokens=tier2_max_tokens,
+        )
 
     conn = init_db(db_path)
     try:
@@ -274,6 +331,8 @@ def run_experiment(
                 child_run_id,
                 spec.checks,
                 base,
+                judge=judge_fn,
+                judge_model=tier2_model,
             )
             for check in checks:
                 worker.record_verdict(
@@ -285,7 +344,19 @@ def run_experiment(
                         "required": check.required,
                         **check.reasoning,
                     },
+                    tier=check.tier,
+                    score=check.score,
+                    judge_model=check.judge_model,
                 )
+            semantic_steps = [
+                {
+                    "step_index": int(step["step_index"]),
+                    "name": str(step["name"]),
+                    "occurrence": int(step["occurrence"]),
+                }
+                for step in worker.steps_for(child_run_id)
+                if step["source"] == "SEMANTIC"
+            ]
             passed = all(check.passed for check in checks if check.required)
             return {
                 "variant_name": variant.name,
@@ -295,6 +366,8 @@ def run_experiment(
                 "divergence_step": run["divergence_step"] if run is not None else None,
                 "passed": passed,
                 "checks": [_check_payload(check) for check in checks],
+                "semantic_matches": len(semantic_steps),
+                "semantic_steps": semantic_steps,
                 "stdout": spawn.stdout,
                 "stderr": spawn.stderr,
             }
@@ -318,11 +391,21 @@ def run_experiment(
                     "variant_name": result["variant_name"],
                     "run_id": result["run_id"],
                     "passed": result["passed"],
+                    "semantic_matches": result["semantic_matches"],
                     "completed": len(results),
                     "total": len(spec.variants),
                 },
             )
     results.sort(key=lambda result: order[str(result["variant_name"])])
+    semantic_steps = [
+        {
+            "variant_name": result["variant_name"],
+            "run_id": result["run_id"],
+            **step,
+        }
+        for result in results
+        for step in result["semantic_steps"]
+    ]
     _emit_event(
         on_event,
         {
@@ -331,6 +414,7 @@ def run_experiment(
             "total": len(results),
             "passed": sum(1 for result in results if result["passed"]),
             "failed": sum(1 for result in results if not result["passed"]),
+            "semantic_matches": len(semantic_steps),
         },
     )
 
@@ -341,6 +425,9 @@ def run_experiment(
         "fork_step_index": fork_step,
         "max_parallel": limit,
         "variants": results,
+        "semantic_matches": len(semantic_steps),
+        "semantic_steps": semantic_steps,
+        "semantic_summary": _semantic_summary(len(semantic_steps)),
     }
 
 
@@ -362,7 +449,15 @@ def _check_payload(check: CheckResult) -> dict[str, Any]:
         "required": check.required,
         "passed": check.passed,
         "reasoning": check.reasoning,
+        "tier": check.tier,
+        "score": check.score,
+        "judge_model": check.judge_model,
     }
+
+
+def _semantic_summary(count: int) -> str:
+    noun = "step" if count == 1 else "steps"
+    return f"{count} {noun} served by semantic match"
 
 
 def _experiment_payload(recorder: Recorder, experiment: Any) -> dict[str, Any]:
@@ -370,23 +465,54 @@ def _experiment_payload(recorder: Recorder, experiment: Any) -> dict[str, Any]:
     variants = recorder.experiment_variants(experiment_id)
     checks = recorder.experiment_checks(experiment_id)
     runs: list[dict[str, Any]] = []
+    semantic_steps: list[dict[str, Any]] = []
     for run in recorder.experiment_runs(experiment_id):
+        run_id = str(run["run_id"])
         verdicts = [
             {
                 "verdict_id": verdict["verdict_id"],
                 "metric_name": verdict["metric_name"],
                 "tier": verdict["tier"],
                 "passed": bool(verdict["passed"]),
+                "score": verdict["score"],
+                "judge_model": verdict["judge_model"],
                 "reasoning": msgspec.json.decode(str(verdict["reasoning_json"])),
             }
-            for verdict in recorder.verdicts_for_run(str(run["run_id"]))
+            for verdict in recorder.verdicts_for_run(run_id)
         ]
-        runs.append({"run": dict(run), "verdicts": verdicts})
+        run_semantic = [
+            {
+                "step_index": int(step["step_index"]),
+                "name": str(step["name"]),
+                "occurrence": int(step["occurrence"]),
+            }
+            for step in recorder.steps_for(run_id)
+            if step["source"] == "SEMANTIC"
+        ]
+        semantic_steps.extend(
+            {
+                "variant_name": run["variant_name"],
+                "run_id": run_id,
+                **step,
+            }
+            for step in run_semantic
+        )
+        runs.append(
+            {
+                "run": dict(run),
+                "verdicts": verdicts,
+                "semantic_matches": len(run_semantic),
+                "semantic_steps": run_semantic,
+            }
+        )
     return {
         "experiment": dict(experiment),
         "variants": variants,
         "checks": checks,
         "runs": runs,
+        "semantic_matches": len(semantic_steps),
+        "semantic_steps": semantic_steps,
+        "semantic_summary": _semantic_summary(len(semantic_steps)),
     }
 
 
@@ -407,6 +533,8 @@ async def start_experiment(request: Request) -> JSONResponse:
             base_dir=payload.base_dir,
             max_parallel=payload.max_parallel,
             on_event=request.app.state.events.publish,
+            config=request.app.state.config,
+            upstream_url=request.app.state.upstream_url,
         )
     except (ValueError, KeyError) as exc:
         return JSONResponse({"error": {"message": str(exc)}}, status_code=400)

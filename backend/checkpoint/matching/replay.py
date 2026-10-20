@@ -26,6 +26,9 @@ class LookupResult:
     occurrence: int
     step: sqlite3.Row | None
     diff: str | None = None
+    semantic: bool = False
+    similarity: float | None = None
+    recorded_input: Any = None
 
     @property
     def step_index(self) -> int | None:

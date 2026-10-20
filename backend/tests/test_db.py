@@ -11,7 +11,15 @@ import pytest
 from checkpoint.storage.db import SCHEMA_VERSION, connect, init_db, migrate
 from checkpoint.storage.models import Experiment, Run, Step, Verdict
 
-EXPECTED_TABLES = {"blobs", "runs", "experiments", "steps", "verdicts", "schema_version"}
+EXPECTED_TABLES = {
+    "blobs",
+    "runs",
+    "experiments",
+    "steps",
+    "verdicts",
+    "judge_cache",
+    "schema_version",
+}
 
 INSERT_BLOB_SQL = (
     "INSERT INTO blobs (blob_hash, byte_size, payload, created_at) VALUES (?, ?, ?, ?)"
@@ -54,10 +62,15 @@ def test_migration_2_adds_divergence_columns_to_a_v1_database(tmp_path: Path) ->
         "INSERT INTO schema_version (version) VALUES (1);"
     )
     conn.commit()
-    assert migrate(conn) == 2
+    assert migrate(conn) == SCHEMA_VERSION
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(runs)")}
     assert {"divergence_step", "divergence_diff_hash"} <= columns
-    assert migrate(conn) == 2
+    tables = {
+        row["name"]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    assert "judge_cache" in tables
+    assert migrate(conn) == SCHEMA_VERSION
     conn.close()
 
 

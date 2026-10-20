@@ -231,6 +231,15 @@ export function RunsPage() {
                     {experiment.run_count ?? 0} variants · {formatTimestamp(experiment.created_at)}
                   </span>
                 </div>
+                {experiment.semantic_matches ? (
+                  <div
+                    data-testid="experiment-semantic-summary"
+                    className="mt-2 font-mono text-[10px] text-good"
+                  >
+                    {experiment.semantic_summary ??
+                      `${experiment.semantic_matches} steps served by semantic match`}
+                  </div>
+                ) : null}
               </a>
             ))}
           </div>

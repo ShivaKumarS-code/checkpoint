@@ -75,4 +75,9 @@ def experiment_payload(row: RunRow) -> dict[str, Any]:
     payload = {field: row[field] for field in EXPERIMENT_FIELDS}
     if _contains(row, "run_count"):
         payload["run_count"] = int(row["run_count"])
+    if _contains(row, "semantic_matches"):
+        count = int(row["semantic_matches"])
+        noun = "step" if count == 1 else "steps"
+        payload["semantic_matches"] = count
+        payload["semantic_summary"] = f"{count} {noun} served by semantic match"
     return payload

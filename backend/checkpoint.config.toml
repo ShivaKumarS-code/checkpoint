@@ -25,3 +25,21 @@ replacement = "<session>"
 # llm_miss_policy = "strict"
 # tool_miss_policy = "strict"
 # checkpoint_miss_policy = "strict"
+
+# Opt-in semantic replay matching. Disabled by default. Only the named LLM
+# step boundaries are eligible. A local embedding score is tried first; set
+# judge = true to ask a small OpenAI-compatible model to confirm each hit.
+# [semantic]
+# enabled = true
+# step_names = ["plan"]
+# threshold = 0.92
+# judge = false
+# judge_model = "gpt-4o-mini"
+
+# Tier 2 rubric checks use this OpenAI-compatible model by default. A check can
+# override it with `model:` in variants.yaml. Point upstream_url at a local
+# server to keep judge calls local.
+# [tier2]
+# model = "gpt-4o-mini"
+# temperature = 0.0
+# max_tokens = 512

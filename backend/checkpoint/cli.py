@@ -164,6 +164,17 @@ def _print_experiment(result: dict[str, Any]) -> None:
             "[green]pass[/green]" if variant["passed"] else "[red]fail[/red]",
         )
     console.print(table)
+    semantic_count = int(result.get("semantic_matches") or 0)
+    if semantic_count:
+        summary = result.get("semantic_summary") or (
+            f"{semantic_count} steps served by semantic match"
+        )
+        console.print(f"[green]{summary}[/green]")
+        for step in result.get("semantic_steps", []):
+            console.print(
+                f"  [dim]{step.get('variant_name')} step {step.get('step_index')}: "
+                f"{step.get('name')}[/dim]"
+            )
     for variant in result["variants"]:
         failed = [check["label"] for check in variant["checks"] if not check["passed"]]
         if failed:
@@ -211,6 +222,7 @@ def run(
             "CHECKPOINT_RUN_ID": run_id,
             "CHECKPOINT_MODE": "record",
             "OPENAI_BASE_URL": f"{daemon.url}/v1",
+            "ANTHROPIC_BASE_URL": f"{daemon.url}/v1",
         }
     )
     exit_code = 1
@@ -275,6 +287,7 @@ def replay(
             "CHECKPOINT_RUN_ID": child_id,
             "CHECKPOINT_MODE": "replay",
             "OPENAI_BASE_URL": f"{daemon.url}/v1",
+            "ANTHROPIC_BASE_URL": f"{daemon.url}/v1",
         }
     )
     exit_code = 1
@@ -311,7 +324,7 @@ def fork(
         None, "--max-parallel", help="override the YAML concurrency limit"
     ),
 ) -> None:
-    """Fork a recorded run across variants and report Tier 1 checks."""
+    """Fork a recorded run across variants and report Tier 1/Tier 2 checks."""
     exit_code = _run_variants(
         run_id, variants, db, upstream, port, max_parallel, require_pass=False
     )
