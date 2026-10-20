@@ -17,7 +17,11 @@ from checkpoint.storage.db import init_db
 
 @pytest.fixture()
 def seeded_app(tmp_path: Path) -> Any:
-    app = create_app(tmp_path / "cassettes.db", "http://127.0.0.1:1")
+    app = create_app(
+        tmp_path / "cassettes.db",
+        "http://127.0.0.1:1",
+        ui_dir=tmp_path / "missing-ui",
+    )
     conn = init_db(app.state.db_path)
     recorder = Recorder(conn, BlobStore(conn))
     parent = recorder.create_run("parent", "RECORD")

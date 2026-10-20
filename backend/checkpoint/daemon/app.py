@@ -10,7 +10,9 @@ from pathlib import Path
 
 import httpx
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from checkpoint.config import Config, effective_masks, effective_redaction, load_config
 from checkpoint.daemon import events, experiments, proxy_router, query_router, sdk_router
@@ -20,13 +22,20 @@ from checkpoint.storage.db import init_db
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_UPSTREAM_URL = "http://127.0.0.1:4141"
+DEFAULT_UI_DIR = Path(__file__).resolve().parent.parent / "ui_dist"
 
 
 def create_app(
-    db_path: str | Path, upstream_url: str, config: Config | None = None
+    db_path: str | Path,
+    upstream_url: str,
+    config: Config | None = None,
+    ui_dir: str | Path | None = None,
 ) -> FastAPI:
     if config is None:
         config = load_config()
+    ui_path = (Path(ui_dir) if ui_dir is not None else DEFAULT_UI_DIR).resolve()
+    index_html = ui_path / "index.html"
+    has_ui = index_html.is_file()
     conn = init_db(db_path)
     blob_store = BlobStore(conn)
     bus = events.EventBus()
@@ -58,8 +67,13 @@ def create_app(
     app.include_router(experiments.router)
     app.include_router(query_router.router)
 
-    @app.get("/")
-    async def index() -> dict[str, str]:
+    if has_ui and (ui_path / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=ui_path / "assets"), name="ui-assets")
+
+    @app.get("/", response_model=None)
+    async def index() -> FileResponse | dict[str, str]:
+        if has_ui:
+            return FileResponse(index_html)
         return {
             "name": "checkpoint",
             "docs": "/docs",
@@ -70,6 +84,20 @@ def create_app(
     @app.get("/api/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa(full_path: str) -> FileResponse:
+        if (
+            not has_ui
+            or full_path.startswith(("api/", "v1/", "docs", "openapi.json", "redoc"))
+        ):
+            raise HTTPException(status_code=404)
+        candidate = (ui_path / full_path).resolve()
+        if candidate.is_file() and candidate.is_relative_to(ui_path):
+            return FileResponse(candidate)
+        if "." in Path(full_path).name:
+            raise HTTPException(status_code=404)
+        return FileResponse(index_html)
 
     return app
 

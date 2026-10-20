@@ -12,11 +12,31 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - name: Install dependencies
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build UI
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Install backend dependencies
+        working-directory: backend
         run: uv sync --frozen
       - name: Lint
+        working-directory: backend
         run: uv run ruff check .
       - name: Type check
+        working-directory: backend
         run: uv run pyright
       - name: Tests
+        working-directory: backend
         run: uv run pytest -q
+      - name: Install Playwright browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: UI smoke tests
+        working-directory: frontend
+        run: npm run test:e2e

@@ -1,0 +1,86 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  @apply bg-ink-950 text-ink-100 antialiased;
+  margin: 0;
+  font-family:
+    Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+::selection {
+  background: rgba(98, 217, 232, 0.3);
+  color: #eef2f8;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #354052 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #354052;
+  border-radius: 4px;
+}
+
+a {
+  text-decoration: none;
+}
+
+code {
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+}
+
+@layer components {
+  .panel {
+    @apply rounded-xl border border-ink-700/80 bg-ink-850/80 shadow-panel backdrop-blur;
+  }
+}
+
+.react-flow__controls {
+  overflow: hidden;
+  border: 1px solid #222937;
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+
+.react-flow__controls-button {
+  width: 28px;
+  height: 28px;
+  border-bottom: 1px solid #222937;
+  background: #10141c;
+  color: #aab5c5;
+  fill: #aab5c5;
+}
+
+.react-flow__controls-button:hover {
+  background: #151a24;
+}
+
+.react-flow__controls-button svg {
+  fill: currentColor;
+}
+
+.react-flow__controls-button:last-child {
+  border-bottom: none;
+}
+
+.react-flow__attribution {
+  display: none;
+}

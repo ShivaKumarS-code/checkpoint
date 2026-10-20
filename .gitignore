@@ -18,3 +18,9 @@ AGENTS.md
 .checkpoint/
 .env
 refund_ledger.jsonl
+
+# frontend build/test artifacts
+frontend/node_modules/
+frontend/test-results/
+frontend/playwright-report/
+frontend/e2e/.data/
