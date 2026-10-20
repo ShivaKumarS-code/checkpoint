@@ -26,9 +26,9 @@ cd frontend
 npm run build
 ```
 
-The build is written to `../backend/checkpoint/ui_dist/` and is committed so
-`uvx --from checkpoint-ai checkpoint web` (or an installed wheel) serves the UI
-without Node.
+The build is written to `../backend/checkpoint/ui_dist/` and is committed so an
+installed wheel serves the UI without Node. Once the PyPI release is published,
+`uvx --from checkpoint-ai checkpoint web` also works.
 
 ## End-to-end tests
 

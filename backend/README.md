@@ -15,9 +15,21 @@ honest scope, benchmarks, case study, and known limits.
 
 ## Install
 
+The package is prepared for PyPI as `checkpoint-ai`; the v0.1.0 upload is still
+pending. If the release is available:
+
 ```bash
 pip install checkpoint-ai
 checkpoint web
+```
+
+Until then, install from a source checkout:
+
+```bash
+git clone https://github.com/ShivaKumarS-code/checkpoint.git
+cd checkpoint/backend
+uv sync
+uv run checkpoint web
 ```
 
 The UI is at <http://127.0.0.1:4040>. The package installs the `checkpoint`

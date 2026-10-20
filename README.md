@@ -38,6 +38,9 @@ not for resuming a process.
 
 Requires Python 3.11+.
 
+The package is prepared for PyPI as `checkpoint-ai`; the v0.1.0 upload is still
+pending. If the release is available, install it with:
+
 ```bash
 pip install checkpoint-ai
 checkpoint web
@@ -49,10 +52,7 @@ Or run it without a persistent install:
 uvx --from checkpoint-ai checkpoint web
 ```
 
-The UI is served at <http://127.0.0.1:4040>. The default cassette is
-`.checkpoint/cassettes.db` in the current directory.
-
-If you are working on checkpoint itself, use a source checkout instead:
+Until the upload is published, use a source checkout:
 
 ```bash
 git clone https://github.com/ShivaKumarS-code/checkpoint.git
@@ -61,7 +61,9 @@ uv sync
 uv run checkpoint web
 ```
 
-Node is only needed to rebuild the UI; the wheel includes the built `ui_dist`.
+The UI is served at <http://127.0.0.1:4040>. The default cassette is
+`.checkpoint/cassettes.db` in the current directory. Node is only needed to
+rebuild the UI; the wheel includes the built `ui_dist`.
 
 ### Record, replay, and fork the demo agent
 
